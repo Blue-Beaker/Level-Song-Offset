@@ -54,6 +54,7 @@ rm -rf "$BUILD_DIR"
 # ---- CMake Configuration ----
 echo "🔧 Configuring CMake..."
 cmake -B "$BUILD_DIR" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN_FILE" \
     -DGEODE_TARGET_PLATFORM=Win64 \
     2>&1
