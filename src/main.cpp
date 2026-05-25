@@ -24,8 +24,8 @@ using namespace geode::prelude;
  *
  * struct MyMenuLayer : Modify<MyMenuLayer, MenuLayer> {};
  */
-#include <Geode/modify/MenuLayer.hpp>
-class $modify(MyMenuLayer, MenuLayer) {
+#include <Geode/modify/LevelInfoLayer.hpp>
+class $modify(MyLevelInfoLayer, LevelInfoLayer) {
 	/**
 	 * Typically classes in GD are initialized using the `init` function, (though not always!),
 	 * so here we use it to add our own button to the bottom menu.
@@ -33,12 +33,12 @@ class $modify(MyMenuLayer, MenuLayer) {
 	 * Note that for all hooks, your signature has to *match exactly*,
 	 * `void init()` would not place a hook!
 	*/
-	bool init() {
+	bool init(GJGameLevel* level, bool challenge) {
 		/**
 		 * We call the original init function so that the
 		 * original class is properly initialized.
 		 */
-		if (!MenuLayer::init()) {
+		if (!LevelInfoLayer::init(level,challenge)) {
 			return false;
 		}
 
@@ -59,15 +59,16 @@ class $modify(MyMenuLayer, MenuLayer) {
 			/**
 			 * Here we use the name we set earlier for our modify class.
 			*/
-			menu_selector(MyMenuLayer::onMyButton)
+			menu_selector(MyLevelInfoLayer::onMyButton)
 		);
+		myButton->setPosition(80,0);
 
 		/**
 		 * Here we access the `bottom-menu` node by its ID, and add our button to it.
 		 * Node IDs are a Geode feature, see this page for more info about it:
 		 * https://docs.geode-sdk.org/tutorials/nodetree
 		*/
-		auto menu = this->getChildByID("bottom-menu");
+		auto menu = this->getChildByID("other-menu");
 		menu->addChild(myButton);
 
 		/**

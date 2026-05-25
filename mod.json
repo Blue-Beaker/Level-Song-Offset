@@ -11,6 +11,7 @@
 	"version": "v1.0.0",
 	"developer": "BlueBeaker",
 	"description": "",
+	"settings": [],
 	"dependencies": {
 		"geode.node-ids": ">=v1.23.3"
 	}
