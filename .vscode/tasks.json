@@ -1,0 +1,72 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "🔧 Build Mod (Win64)",
+			"type": "shell",
+			"command": "${workspaceFolder}/scripts/build.sh",
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"presentation": {
+				"echo": true,
+				"reveal": "always",
+				"focus": true,
+				"panel": "dedicated",
+				"showReuseMessage": false,
+				"clear": true
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "▶️ Run Mod (Launch GD)",
+			"type": "shell",
+			"command": "${workspaceFolder}/scripts/run.sh",
+			"group": {
+				"kind": "test",
+				"isDefault": true
+			},
+			"presentation": {
+				"echo": true,
+				"reveal": "always",
+				"focus": true,
+				"panel": "dedicated",
+				"showReuseMessage": false,
+				"clear": true
+			},
+			"problemMatcher": [],
+			"dependsOn": ["🔧 Build Mod (Win64)"]
+		},
+		{
+			"label": "🔄 Build & Run",
+			"type": "shell",
+			"command": "${workspaceFolder}/scripts/build-and-run.sh",
+			"group": "none",
+			"presentation": {
+				"echo": true,
+				"reveal": "always",
+				"focus": true,
+				"panel": "dedicated",
+				"showReuseMessage": false,
+				"clear": true
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "🧹 Clean Build",
+			"type": "shell",
+			"command": "rm -rf ${workspaceFolder}/build",
+			"group": "none",
+			"presentation": {
+				"echo": true,
+				"reveal": "always",
+				"focus": true,
+				"panel": "dedicated",
+				"showReuseMessage": false,
+				"clear": true
+			},
+			"problemMatcher": []
+		}
+	]
+}

@@ -1,0 +1,18 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"name": "🔧 Build Mod (Win64)",
+			"type": "cppvsdbg",
+			"request": "launch",
+			"program": "cmake",
+			"args": [
+				"--build",
+				"${workspaceFolder}/build"
+			],
+			"console": "externalTerminal",
+			"preLaunchTask": "🔧 Build Mod (Win64)",
+			"internalConsoleOptions": "neverOpen"
+		}
+	]
+}

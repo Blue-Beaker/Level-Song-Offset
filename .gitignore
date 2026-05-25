@@ -47,8 +47,10 @@ build-*/
 # Workspace files are user-specific
 *.sublime-workspace
 
-# ILY vscode
-**/.vscode
+# VS Code user-specific settings (keep tasks.json, launch.json, extensions.json)
+.vscode/*.code-snippets
+.vscode/settings.json
+.vscode/extensions.json
 
 # Local History for Visual Studio Code
 .history/
