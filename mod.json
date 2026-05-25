@@ -18,7 +18,7 @@
 			"type": "bool",
 			"default": true
 		},
-		"fix-negative-offset": {
+		"negative-offset-fix": {
 			"name": "Negative Offset Workaround",
 			"description": "Automatically use workaround for the bug with negative offset",
 			"type": "bool",
