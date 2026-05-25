@@ -11,7 +11,20 @@
 	"version": "v1.0.0",
 	"developer": "BlueBeaker",
 	"description": "",
-	"settings": [],
+	"settings": {
+		"show-offset-indicator": {
+			"name": "Show Offset Indicator",
+			"description": "Show a visual indicator of the current offset in-game",
+			"type": "bool",
+			"default": true
+		},
+		"fix-negative-offset": {
+			"name": "Negative Offset Workaround",
+			"description": "Automatically use workaround for the bug with negative offset",
+			"type": "bool",
+			"default": true
+		}
+	},
 	"dependencies": {
 		"geode.node-ids": ">=v1.23.3"
 	}

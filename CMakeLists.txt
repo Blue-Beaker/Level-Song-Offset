@@ -22,8 +22,5 @@ endif()
 
 add_subdirectory($ENV{GEODE_SDK} ${CMAKE_CURRENT_BINARY_DIR}/geode)
 
-# Register resources folder (textures, configs, etc.)
-package_geode_resources(${PROJECT_NAME} resources resources)
-
 # Set up dependencies, resources, and link Geode.
 setup_geode_mod(${PROJECT_NAME})
