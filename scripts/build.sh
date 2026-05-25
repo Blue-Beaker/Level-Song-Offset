@@ -48,19 +48,27 @@ if [ ! -f "$TOOLCHAIN_FILE" ]; then
     exit 1
 fi
 
-# ---- Clean build dir (optional: comment out to keep cache) ----
-rm -rf "$BUILD_DIR"
+# ---- Optional clean (pass CLEAN=1 or "clean" arg) ----
+if [[ "$*" == *"clean"* ]] || [ -n "$CLEAN" ]; then
+    echo "🧹 Cleaning build directory..."
+    rm -rf "$BUILD_DIR"
+fi
 
-# ---- CMake Configuration ----
-echo "🔧 Configuring CMake..."
-cmake -B "$BUILD_DIR" -G Ninja \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN_FILE" \
-    -DGEODE_TARGET_PLATFORM=Win64 \
-    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-    2>&1
+# ---- CMake Configuration (only if not already configured) ----
+if [ ! -f "$BUILD_DIR/build.ninja" ]; then
+    echo "🔧 Configuring CMake..."
+    cmake -B "$BUILD_DIR" -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN_FILE" \
+        -DGEODE_TARGET_PLATFORM=Win64 \
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+        -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+        2>&1
+else
+    echo "⚡ Using cached CMake configuration..."
+fi
 
-# ---- Build ----
+# ---- Build (with ccache if available) ----
 echo ""
 echo "🔨 Building..."
 cmake --build "$BUILD_DIR" 2>&1
