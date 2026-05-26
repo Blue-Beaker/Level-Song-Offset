@@ -1,5 +1,7 @@
 #include "OffsetStorage.hpp"
 
+#include <cvolton.level-id-api/include/EditorIDs.hpp>
+
 static constexpr auto SAVE_KEY = "level-offsets";
 
 static std::unordered_map<int, float>& getOffsets() {
@@ -30,6 +32,14 @@ static void flushOffsets() {
     }
 }
 
+/// Resolve the effective level ID, using EditorIDs for editor levels.
+static int resolveLevelId(GJGameLevel* level) {
+    if (!level) return 0;
+    if (level->m_levelID != 0) return level->m_levelID;
+    // Editor level — use EditorIDs API
+    return EditorIDs::getID(level);
+}
+
 float OffsetStorage::getOffsetForLevel(int levelId) {
     auto& offsets = getOffsets();
     auto it = offsets.find(levelId);
@@ -39,8 +49,16 @@ float OffsetStorage::getOffsetForLevel(int levelId) {
     return 0.f;
 }
 
+float OffsetStorage::getOffsetForLevel(GJGameLevel* level) {
+    return getOffsetForLevel(resolveLevelId(level));
+}
+
 void OffsetStorage::setOffsetForLevel(int levelId, float offset) {
     auto& offsets = getOffsets();
     offsets[levelId] = offset;
     flushOffsets();
+}
+
+void OffsetStorage::setOffsetForLevel(GJGameLevel* level, float offset) {
+    setOffsetForLevel(resolveLevelId(level), offset);
 }

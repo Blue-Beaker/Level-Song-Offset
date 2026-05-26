@@ -29,7 +29,7 @@ void MyPlayLayer::prepareMusic(bool dontWait) {
     LOG_DEBUG("BEFORE prepareMusic: m_musicOffset={}",
               FMODAudioEngine::sharedEngine()->m_musicOffset);
     if (m_level) {
-        float userOffset = OffsetStorage::getOffsetForLevel(m_level->m_levelID);
+        float userOffset = OffsetStorage::getOffsetForLevel(m_level);
         float originalOffset = static_cast<float>(s_originalMusicOffset[this]);
         float totalOffset = originalOffset + userOffset;
 

@@ -325,7 +325,7 @@ class $modify(NegativeOffsetGJGameLevel, GJGameLevel) {
         }
 
         // Check if this level has a negative offset that needs the workaround
-        float userOffset = OffsetStorage::getOffsetForLevel(m_levelID);
+        float userOffset = OffsetStorage::getOffsetForLevel(this);
         int totalOffset = FMODAudioEngine::sharedEngine()->m_musicOffset
                           + static_cast<int>(userOffset);
 
@@ -414,7 +414,7 @@ class $modify(PaddedQueueMusicFMODAudioEngine, FMODAudioEngine) {
             return;
         }
 
-        float userOffset = OffsetStorage::getOffsetForLevel(pl->m_level->m_levelID);
+        float userOffset = OffsetStorage::getOffsetForLevel(pl->m_level);
         int totalOffset = FMODAudioEngine::sharedEngine()->m_musicOffset
                           + static_cast<int>(userOffset);
         if (totalOffset >= 0) {
