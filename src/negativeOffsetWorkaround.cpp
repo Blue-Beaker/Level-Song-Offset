@@ -2,6 +2,7 @@
 #include "OffsetStorage.hpp"
 
 #include <Geode/modify/GJGameLevel.hpp>
+#include <Geode/modify/FMODAudioEngine.hpp>
 
 #include <fmod.hpp>
 
@@ -130,119 +131,131 @@ static bool createPaddedWavFile(
     return true;
 }
 
-// ─── Audio filename redirection ──────────────────────────────────────────────
+// ─── Padded file registry ────────────────────────────────────────────────────
 //
-// Before calling the original prepareMusic, we set this global so that
-// GJGameLevel::getAudioFileName() returns the padded WAV path instead of
-// the original filename.  GD is single-threaded, so a single global is safe.
+// Maps: level ID → padded WAV path
+// Populated in GJGameLevel::getAudioFileName hook (called during prepareMusic)
+// Used in FMODAudioEngine::queueStartMusic hook (called every time music plays)
+//
+// We key by level ID because getAudioFileName() returns the padded WAV path
+// directly (like jukebox does), and queueStartMusic receives that same path.
+// When the level is re-entered or retried, getAudioFileName is called again
+// and the same padded path is returned, so queueStartMusic always gets it.
 
-static std::optional<std::filesystem::path> s_audioFileNameRedirect;
+static std::unordered_map<int, std::filesystem::path> s_paddedPathByLevelId;
+
+// ─── Hook: GJGameLevel::getAudioFileName ─────────────────────────────────────
+// When the game asks for the level's audio filename, if this level has a
+// negative offset, we create a padded WAV and return ITS path directly.
+// This follows the same pattern as jukebox — the filename returned here is
+// what ends up being passed to queueStartMusic.
 
 class $modify(NegativeOffsetGJGameLevel, GJGameLevel) {
     gd::string getAudioFileName() {
-        if (s_audioFileNameRedirect.has_value()) {
-            auto result = gd::string(s_audioFileNameRedirect->string());
-            log::debug("Redirected getAudioFileName to: {}", result);
-            s_audioFileNameRedirect.reset();
-            return result;
+        // Check if this level has a negative offset that needs the workaround
+        float userOffset = OffsetStorage::getOffsetForLevel(m_levelID);
+        int totalOffset = FMODAudioEngine::sharedEngine()->m_musicOffset
+                          + static_cast<int>(userOffset);
+
+        bool fixEnabled = Mod::get()->getSettingValue<bool>("negative-offset-fix");
+        if (totalOffset >= 0 || !fixEnabled) {
+            return GJGameLevel::getAudioFileName();
         }
-        return GJGameLevel::getAudioFileName();
+
+        // Check if we already have a padded file for this level
+        {
+            auto it = s_paddedPathByLevelId.find(m_levelID);
+            if (it != s_paddedPathByLevelId.end()) {
+                // File exists on disk? If so, reuse it
+                std::error_code ec;
+                if (std::filesystem::exists(it->second, ec)) {
+                    log::debug("Reusing padded audio for level {}", m_levelID);
+                    // Ensure m_musicOffset = 0
+                    FMODAudioEngine::sharedEngine()->m_musicOffset = 0;
+                    return gd::string(it->second.string());
+                }
+                // File was deleted (e.g. onQuit cleanup), remove stale entry
+                s_paddedPathByLevelId.erase(it);
+            }
+        }
+
+        // First time: get the original filename to locate the source file
+        auto original = GJGameLevel::getAudioFileName();
+        if (original.empty()) return original;
+
+        // Resolve the original file path
+        auto* fileUtils = CCFileUtils::sharedFileUtils();
+        std::string fullPath = fileUtils->fullPathForFilename(original.c_str(), false);
+        if (fullPath.empty()) return original;
+
+        std::filesystem::path actualSourcePath(fullPath);
+        if (!std::filesystem::exists(actualSourcePath)) return original;
+
+        // Create the padded WAV file in the mod's save directory.
+        // Using getSaveDir() (persistent across sessions) instead of
+        // getModRuntimeDir() (ephemeral, changes every launch) so the
+        // padded file is cached and reused on subsequent plays.
+        auto saveDir = Mod::get()->getSaveDir();
+        std::error_code ec;
+        std::filesystem::create_directories(saveDir, ec);
+
+        int absPadMs = std::abs(totalOffset);
+        auto paddedPath = saveDir / fmt::format("padded_{}_{}.wav", m_levelID, absPadMs);
+
+        if (!std::filesystem::exists(paddedPath, ec)) {
+            if (!createPaddedWavFile(actualSourcePath, paddedPath, absPadMs)) {
+                return original;
+            }
+        }
+
+        // Register the mapping
+        s_paddedPathByLevelId[m_levelID] = paddedPath;
+
+        // Ensure m_musicOffset = 0 — silence is baked into the file
+        FMODAudioEngine::sharedEngine()->m_musicOffset = 0;
+
+        log::info(
+            "Redirecting audio for level {} to padded file: {}",
+            m_levelID, paddedPath.string()
+        );
+
+        // Return the padded WAV path directly (like jukebox does)
+        return gd::string(paddedPath.string());
+    }
+};
+
+// ─── Hook: FMODAudioEngine::queueStartMusic ──────────────────────────────────
+// No longer needed for redirect — getAudioFileName already returns the padded
+// path.  But we still need to ensure m_musicOffset = 0.
+
+class $modify(NegativeOffsetFMOD, FMODAudioEngine) {
+    void queueStartMusic(
+        gd::string audioFilename, float p1, float p2, float p3,
+        bool p4, int ms, int p6, int p7, int p8, int p9,
+        bool p10, int p11, bool p12, bool p13
+    ) {
+        // Check if this audioFilename is one of our padded WAV files
+        // by looking for ".wav" and checking the registry
+        if (audioFilename.size() > 4 &&
+            audioFilename.rfind(".wav") == audioFilename.size() - 4) {
+            // This might be our padded file — ensure m_musicOffset = 0
+            this->m_musicOffset = 0;
+        }
+
+        FMODAudioEngine::queueStartMusic(
+            audioFilename, p1, p2, p3, p4,
+            ms, p6, p7, p8, p9, p10, p11, p12, p13
+        );
     }
 };
 
 // ─── PlayLayer hooks ─────────────────────────────────────────────────────────
 
-void NegativeOffsetPlayLayer::prepareMusic(bool dontWait) {
-    auto* audio = FMODAudioEngine::sharedEngine();
-    float userOffset = m_level ? OffsetStorage::getOffsetForLevel(m_level->m_levelID) : 0.f;
-
-    int originalOffset = audio->m_musicOffset;
-    int totalOffset    = originalOffset + static_cast<int>(userOffset);
-
-    bool fixEnabled = Mod::get()->getSettingValue<bool>("negative-offset-fix");
-
-    if (totalOffset >= 0 || !fixEnabled || !m_level) {
-        // Nothing to do — pass through
-        PlayLayer::prepareMusic(dontWait);
-        return;
-    }
-
-    // ── Negative offset: redirect to a padded WAV file ──
-
-    // Clean up any leftover padded file from a previous run (e.g. retry)
-    if (!m_fields->m_paddedAudioPath.empty()) {
-        std::error_code ec;
-        std::filesystem::remove(m_fields->m_paddedAudioPath, ec);
-        m_fields->m_paddedAudioPath.clear();
-    }
-
-    // Get the original audio filename (before we set the redirect)
-    gd::string audioFileName = m_level->getAudioFileName();
-    if (audioFileName.empty()) {
-        log::warn("Could not get audio file name, falling back");
-        PlayLayer::prepareMusic(dontWait);
-        return;
-    }
-
-    // Resolve to an absolute path via CCFileUtils
-    auto* fileUtils = CCFileUtils::sharedFileUtils();
-    std::string fullPath = fileUtils->fullPathForFilename(audioFileName.c_str(), false);
-
-    std::filesystem::path actualSourcePath;
-    if (!fullPath.empty()) {
-        actualSourcePath = std::filesystem::path(fullPath);
-    }
-    if (actualSourcePath.empty() || !std::filesystem::exists(actualSourcePath)) {
-        log::warn("Could not locate audio file '{}', falling back", audioFileName);
-        PlayLayer::prepareMusic(dontWait);
-        return;
-    }
-
-    // Create the padded WAV file in the mod's runtime directory
-    auto runtimeDir = dirs::getModRuntimeDir();
-    std::error_code ec;
-    std::filesystem::create_directories(runtimeDir, ec);
-
-    int absPadMs = std::abs(totalOffset);
-    auto paddedPath = runtimeDir / fmt::format("padded_{}_{}.wav", m_level->m_levelID, absPadMs);
-
-    if (!std::filesystem::exists(paddedPath, ec)) {
-        if (!createPaddedWavFile(actualSourcePath, paddedPath, absPadMs)) {
-            log::warn("Failed to create padded audio file, falling back");
-            PlayLayer::prepareMusic(dontWait);
-            return;
-        }
-    }
-
-    m_fields->m_paddedAudioPath = paddedPath;
-
-    // Set the redirect so GJGameLevel::getAudioFileName() returns our file
-    s_audioFileNameRedirect = paddedPath;
-
-    // Silence is baked into the file — no FMOD offset needed
-    audio->m_musicOffset = 0;
-
-    // Let the game load the (now redirected) audio file
-    PlayLayer::prepareMusic(dontWait);
-
-    // Safety: clear if getAudioFileName wasn't called
-    s_audioFileNameRedirect.reset();
-}
-
-void NegativeOffsetPlayLayer::startMusic() {
-    if (!m_fields->m_paddedAudioPath.empty()) {
-        // Silence is already in the file — play at position 0
-        FMODAudioEngine::sharedEngine()->m_musicOffset = 0;
-    }
-    PlayLayer::startMusic();
-}
-
 void NegativeOffsetPlayLayer::onQuit() {
-    // Delete the temporary padded file
-    if (!m_fields->m_paddedAudioPath.empty()) {
-        std::error_code ec;
-        std::filesystem::remove(m_fields->m_paddedAudioPath, ec);
-        m_fields->m_paddedAudioPath.clear();
+    // Remove from registry
+    if (m_level) {
+        s_paddedPathByLevelId.erase(m_level->m_levelID);
     }
+
     PlayLayer::onQuit();
 }

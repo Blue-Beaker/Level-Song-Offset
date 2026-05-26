@@ -8,30 +8,18 @@ using namespace geode::prelude;
 /**
  * Negative offset workaround: silence-prefix approach.
  *
- * When a level has a negative total offset (GameManager timeOffset + user offset),
- * instead of using runtime hacks (volume mute + seek), this module creates a
- * temporary WAV file that has |offset| ms of silence prepended to the original
- * audio, then redirects the game to load that padded file instead.
+ * When a level has a negative total offset, this module creates a temporary
+ * WAV file with |offset| ms of silence prepended, then hooks into
+ * FMODAudioEngine::queueStartMusic to redirect playback to the padded file.
  *
- * This is the cleanest possible approach because:
- *   - The game loads a modified audio file as if it were the original
- *   - All runtime state (pause/resume, checkpoints, retry, sync) works normally
- *   - No FMOD hacks, no scheduled callbacks, no volume manipulation
+ * This works on every play/respawn because queueStartMusic is called every
+ * time music starts, not just on initial level entry.
  *
  * Hook points:
- *   - PlayLayer::prepareMusic — earliest point to intercept and create the
- *     padded file, before any audio loading occurs
- *   - GJGameLevel::getAudioFileName — redirect the filename to our padded WAV
- *   - PlayLayer::startMusic — ensure m_musicOffset = 0 (silence is in the file)
- *   - PlayLayer::onQuit — clean up temporary files and restore state
+ *   - GJGameLevel::getAudioFileName — create & register the padded WAV file
+ *   - FMODAudioEngine::queueStartMusic — redirect to the padded WAV
+ *   - PlayLayer::onQuit — clean up temporary files
  */
 class $modify(NegativeOffsetPlayLayer, PlayLayer) {
-    void prepareMusic(bool dontWait);
-    void startMusic();
     void onQuit();
-
-    struct Fields {
-        // Path to the temporary padded audio file, for cleanup
-        std::filesystem::path m_paddedAudioPath;
-    };
 };
