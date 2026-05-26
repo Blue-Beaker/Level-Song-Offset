@@ -28,6 +28,10 @@ bool MyPlayLayer::init(GJGameLevel* level, bool useReplay, bool dontCreateObject
         return false;
 
     s_originalMusicOffset[this] = FMODAudioEngine::sharedEngine()->m_musicOffset;
+
+    // Run cache cleanup once per level load (triggered by clicking "play").
+    enforceCacheSizeLimit();
+
     return true;
 }
 
@@ -217,7 +221,6 @@ void MyFMODAudioEngine::queueStartMusic(gd::string audioFilename, float pitch,
                     std::filesystem::path actualSourcePath(fullPath);
                     if (std::filesystem::exists(actualSourcePath)) {
                         if (createPaddedWavFile(actualSourcePath, paddedPath, intervalMs)) {
-                            enforceCacheSizeLimit();
                             s_paddedPathBySongKey[songKey] = paddedPath;
                         }
                     }

@@ -35,6 +35,7 @@ int getSongKey(GJGameLevel* level);
 int extractSongIdFromPath(std::string_view path);
 
 /// Resolve the cache directory from settings or fall back to the mod save dir.
+/// Under Wine, auto-maps Linux-style paths to Z:\ drive.
 std::filesystem::path getCacheDir();
 
 /// Enforce the max cache size: delete oldest padded files when exceeded.

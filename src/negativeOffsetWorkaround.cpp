@@ -8,6 +8,11 @@
 
 using namespace geode::prelude;
 
+// Conditional debug logging — enabled via the "debug-logging" setting
+#define LOG_DEBUG(...) \
+    do { if (Mod::get()->getSettingValue<bool>("debug-logging")) \
+        log::info(__VA_ARGS__); } while(0)
+
 // ─── WAV file helpers ────────────────────────────────────────────────────────
 
 // Standard 44-byte PCM WAV header
@@ -205,11 +210,38 @@ int extractSongIdFromPath(std::string_view path) {
 }
 
 /// Resolve the cache directory from settings or fall back to the mod save dir.
+/// Under Wine, a Linux-style path like /tmp/lso_cache may not be recognized
+/// by std::filesystem. We detect this and prepend Z:\ (Wine's default Z: drive
+/// mapping).
 std::filesystem::path getCacheDir() {
     auto customPath = Mod::get()->getSettingValue<std::string>("padded-cache-path");
     if (!customPath.empty()) {
+        // If the path starts with /, it might be a Linux path under Wine.
+        // Map it to Z:\ (Wine's default Z: drive mapping).
+        if (customPath[0] == '/') {
+            std::string winePath = "Z:";
+            for (char c : customPath) {
+                if (c == '/') winePath += '\\';
+                else winePath += c;
+            }
+            std::filesystem::path wp(winePath);
+            std::error_code wec;
+            std::filesystem::create_directories(wp, wec);
+            if (!wec) {
+                log::debug("getCacheDir: mapped Linux path '{}' to Wine path '{}'",
+                           customPath, winePath);
+                return wp;
+            }
+        }
+
+        // Try the path as-is
         std::filesystem::path p(customPath);
         std::error_code ec;
+        if (std::filesystem::exists(p, ec)) {
+            return p;
+        }
+
+        // Try to create the directory
         std::filesystem::create_directories(p, ec);
         if (!ec) return p;
         log::warn("Custom cache path invalid, falling back to save dir: {}", ec.message());
@@ -218,14 +250,18 @@ std::filesystem::path getCacheDir() {
 }
 
 /// Enforce the max cache size: delete oldest padded files when exceeded.
-/// Only counts files matching the "padded_*.wav" pattern.
+/// Uses the global cache registry (s_cacheRegistry) instead of
+/// directory_iterator to avoid filesystem compatibility issues (e.g. wine).
 /// Files currently registered in s_paddedPathBySongKey are excluded from deletion.
 void enforceCacheSizeLimit() {
     int maxSizeMB = Mod::get()->getSettingValue<int>("padded-cache-max-size");
-    if (maxSizeMB <= 0) return; // unlimited
+    if (maxSizeMB <= 0) {
+        LOG_DEBUG("Cache limit disabled (maxSizeMB={})", maxSizeMB);
+        return;
+    }
 
     auto cacheDir = getCacheDir();
-    std::error_code ec;
+    LOG_DEBUG("Scanning cache directory: {}", cacheDir.string());
 
     // Build a set of in-use paths so we never delete the current level's cache
     std::unordered_set<std::filesystem::path> inUse;
@@ -233,54 +269,83 @@ void enforceCacheSizeLimit() {
         inUse.insert(p.lexically_normal());
     }
 
-    // Collect all padded WAV files with their last-write times
+    // Collect removable files via directory scan
     struct FileEntry {
         std::filesystem::path path;
         std::filesystem::file_time_type time;
         uintmax_t size;
     };
-    std::vector<FileEntry> files;
-
+    std::vector<FileEntry> removable;
     uintmax_t totalSize = 0;
-    for (auto& entry : std::filesystem::directory_iterator(cacheDir, ec)) {
-        if (!entry.is_regular_file(ec)) continue;
-        auto& p = entry.path();
-        auto name = p.filename().string();
-        if (name.find("padded_") != 0 || p.extension() != ".wav") continue;
+    int totalFiles = 0;
 
-        // Skip files that are currently in use
-        if (inUse.count(p.lexically_normal())) continue;
+    std::error_code dirEc;
+    if (std::filesystem::exists(cacheDir, dirEc)) {
+        LOG_DEBUG("Cache dir exists, starting directory scan");
+        for (auto& entry : std::filesystem::directory_iterator(cacheDir, dirEc)) {
+            if (dirEc) {
+                LOG_DEBUG("Directory iterator error: {}", dirEc.message());
+                break;
+            }
+            if (!entry.is_regular_file(dirEc)) continue;
+            if (dirEc) break;
 
-        auto ft = entry.last_write_time(ec);
-        auto fs = entry.file_size(ec);
-        files.push_back({entry.path(), ft, fs});
-        totalSize += fs;
+            auto& p = entry.path();
+            auto name = p.filename().string();
+            if (name.find("padded_") != 0 || p.extension() != ".wav") continue;
+
+            totalFiles++;
+
+            // Skip in-use
+            if (inUse.count(p.lexically_normal())) continue;
+
+            auto ft = entry.last_write_time(dirEc);
+            if (dirEc) { dirEc.clear(); continue; }
+            auto fs = entry.file_size(dirEc);
+            if (dirEc) { dirEc.clear(); continue; }
+
+            removable.push_back({entry.path(), ft, fs});
+            totalSize += fs;
+        }
     }
 
     uintmax_t maxSizeBytes = static_cast<uintmax_t>(maxSizeMB) * 1024ULL * 1024ULL;
-    if (totalSize <= maxSizeBytes) return;
+    LOG_DEBUG("Cache cleanup: {} removable files, {:.1f} MB / {} MB ({} in-use, {} total on disk)",
+              removable.size(),
+              static_cast<double>(totalSize) / (1024.0 * 1024.0),
+              maxSizeMB, inUse.size(), totalFiles);
+
+    if (totalSize <= maxSizeBytes) {
+        LOG_DEBUG("Cache size OK, no cleanup needed");
+        return;
+    }
 
     // Sort oldest-first
-    std::sort(files.begin(), files.end(),
+    std::sort(removable.begin(), removable.end(),
         [](const FileEntry& a, const FileEntry& b) { return a.time < b.time; });
 
     // Delete oldest files until under limit
     uintmax_t target = totalSize - maxSizeBytes;
     uintmax_t freed = 0;
     int deleted = 0;
-    for (auto& f : files) {
-        std::filesystem::remove(f.path, ec);
-        if (!ec) {
-            freed += f.size;
+    for (auto& entry : removable) {
+        std::error_code rmEc;
+        std::filesystem::remove(entry.path, rmEc);
+        if (!rmEc) {
+            freed += entry.size;
             deleted++;
-            log::info("Deleted old padded cache: {} ({} MB)", f.path.filename().string(), f.size / (1024 * 1024));
+            LOG_DEBUG("  Deleted {} ({:.1f} MB)", entry.path.filename().string(),
+                      static_cast<double>(entry.size) / (1024.0 * 1024.0));
+        } else {
+            log::warn("Failed to delete {}: {}", entry.path.string(), rmEc.message());
         }
         if (freed >= target) break;
     }
 
-    if (deleted > 0) {
-        log::info("Cache cleanup: freed {} MB, deleted {} file(s)", freed / (1024 * 1024), deleted);
-    }
+    LOG_DEBUG("Cache cleanup done: {:.1f} MB over limit, freed {:.1f} MB, deleted {} file(s)",
+              static_cast<double>(target) / (1024.0 * 1024.0),
+              static_cast<double>(freed) / (1024.0 * 1024.0),
+              deleted);
 }
 
 /// Ensure a padded WAV exists for the given song key and offset.
@@ -316,7 +381,6 @@ void ensurePaddedFile(int songKey, int totalOffset) {
     if (!std::filesystem::exists(actualSourcePath)) return;
 
     if (createPaddedWavFile(actualSourcePath, paddedPath, intervalMs)) {
-        enforceCacheSizeLimit();
         s_paddedPathBySongKey[songKey] = paddedPath;
         log::info("Eagerly created padded file for song key {}: {}", songKey, paddedPath.string());
     }
@@ -373,8 +437,6 @@ class $modify(NegativeOffsetGJGameLevel, GJGameLevel) {
             if (!createPaddedWavFile(actualSourcePath, paddedPath, intervalMs)) {
                 return original;
             }
-            // Enforce cache size limit after creating a new file
-            enforceCacheSizeLimit();
         }
 
         // Register and return
