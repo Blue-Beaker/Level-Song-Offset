@@ -89,7 +89,7 @@ void OffsetPopup::onClearCache(CCObject*) {
         "Cancel", "Delete",
         [collection](auto, bool btn2) mutable {
             if (btn2) {
-                deleteOldestFiles(collection.removable, 0);
+                deleteOldestFiles(collection.removable, collection.totalSize);
             }
         }
     );
