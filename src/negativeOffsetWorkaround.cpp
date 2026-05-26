@@ -224,14 +224,14 @@ class $modify(NegativeOffsetGJGameLevel, GJGameLevel) {
         // Check if this level has a negative offset that needs the workaround
         // s_currentTotalOffset is set by MyPlayLayer::prepareMusic before
         // PlayLayer::prepareMusic calls getAudioFileName internally.
-        extern float s_currentTotalOffset;
-        float totalOffset = s_currentTotalOffset;
+        extern int s_currentTotalOffset;
+        int totalOffset = s_currentTotalOffset;
         bool fixEnabled = Mod::get()->getSettingValue<bool>("negative-offset-fix");
         if (totalOffset >= 0 || !fixEnabled) {
             return GJGameLevel::getAudioFileName();
         }
 
-        int absTotal   = static_cast<int>(std::abs(totalOffset));
+        int absTotal = std::abs(totalOffset);
 
         // Locate the original audio file
         auto original = GJGameLevel::getAudioFileName();
@@ -245,7 +245,7 @@ class $modify(NegativeOffsetGJGameLevel, GJGameLevel) {
         if (!std::filesystem::exists(actualSourcePath)) return original;
 
         // Create the padded WAV file in the configured cache directory
-        auto paddedPath = getPaddedPath(songKey, static_cast<int>(totalOffset));
+        auto paddedPath = getPaddedPath(songKey, totalOffset);
         int intervalMs = ((absTotal + 999) / 1000) * 1000;
         std::error_code ec;
 

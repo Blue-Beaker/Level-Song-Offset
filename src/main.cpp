@@ -7,7 +7,7 @@
 /// Show the offset popup for a level.
 static void showOffsetPopup(GJGameLevel* level) {
     if (!level) return;
-    float currentOffset = OffsetStorage::getOffsetForLevel(getLevelId(level));
+    int currentOffset = OffsetStorage::getOffsetForLevel(getLevelId(level));
     auto popup = OffsetPopup::create(level, currentOffset);
     popup->show();
 }
@@ -17,9 +17,9 @@ static void showOffsetPopup(GJGameLevel* level) {
 static CCMenuItemSpriteExtra* createOffsetBtn(CCObject* target, SEL_MenuHandler selector) {
     auto circleSprite = CircleButtonSprite::createWithSprite(
         "offset-icon.png"_spr,
-        0.8f,
+        1.0f,
         CircleBaseColor::Green,
-        CircleBaseSize::Small
+        CircleBaseSize::Tiny
     );
     return CCMenuItemSpriteExtra::create(circleSprite, target, selector);
 }

@@ -16,13 +16,13 @@ using namespace geode::prelude;
 class OffsetStorage {
 public:
     /**
-     * Get the stored offset for a given level.
+     * Get the stored offset (in milliseconds) for a given level.
      * Returns 0 if no offset has been set.
      */
-    static float getOffsetForLevel(int levelId);
+    static int getOffsetForLevel(int levelId);
 
     /**
-     * Set the offset for a given level and persist to save data.
+     * Set the offset (in milliseconds) for a given level and persist to save data.
      */
-    static void setOffsetForLevel(int levelId, float offset);
+    static void setOffsetForLevel(int levelId, int offset);
 };

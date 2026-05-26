@@ -47,6 +47,29 @@ std::filesystem::path getPaddedPath(int songKey, int totalOffset);
 
 /// Enforce the max cache size: delete oldest padded files when exceeded.
 /// Files currently registered in s_paddedPathBySongKey are excluded.
+/// A padded WAV file entry found during cache scan.
+struct FileEntry {
+    std::filesystem::path path;
+    std::filesystem::file_time_type time;
+    uintmax_t size;
+};
+
+/// Result of scanning the cache directory for removable padded files.
+struct CacheCollection {
+    std::vector<FileEntry> removable;
+    uintmax_t totalSize = 0;
+    int totalFiles = 0;
+    int excludedCount = 0;
+};
+
+/// Scan the cache directory and collect removable padded WAV files.
+/// Files in \p excludedFiles are skipped.
+CacheCollection collectRemovableCacheFiles(const std::unordered_set<std::filesystem::path>& excludedFiles);
+
+/// Delete files from \c collection (sorted oldest-first) until \p target bytes are freed.
+/// Returns the number of bytes actually freed.
+uintmax_t deleteOldestFiles(std::vector<FileEntry>& files, uintmax_t target);
+
 void enforceCacheSizeLimit();
 
 void reduceCacheToSize(int maxSizeMB, std::unordered_set<std::filesystem::path> excludedFiles);

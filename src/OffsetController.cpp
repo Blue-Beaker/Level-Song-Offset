@@ -10,11 +10,11 @@ using namespace geode::prelude;
     do { if (Mod::get()->getSettingValue<bool>("debug-logging")) \
         log::info(__VA_ARGS__); } while(0)
 
-// Stores the effective totalOffset for the current PlayLayer.
+// Stores the effective totalOffset (ms) for the current PlayLayer.
 // Set in prepareMusic, read by getAudioFileName, queueStartMusic,
 // and setMusicTimeMS hooks.
 // totalOffset = original GameManager::m_timeOffset + user offset.
-float s_currentTotalOffset = 0.f;
+int s_currentTotalOffset = 0;
 
 // ─── Hook: PlayLayer ────────────────────────────────────────────────────────
 // We don't modify m_musicOffset anymore. Instead, queueStartMusic and
@@ -28,9 +28,9 @@ bool MyPlayLayer::init(GJGameLevel* level, bool useReplay, bool dontCreateObject
     // Pre-register all song keys for this level in s_paddedPathBySongKey,
     // so cache cleanup won't delete files we're about to use.
     if (m_level && Mod::get()->getSettingValue<bool>("negative-offset-fix")) {
-        float userOffset = OffsetStorage::getOffsetForLevel(getLevelId(m_level));
-        float originalOffset = static_cast<float>(FMODAudioEngine::sharedEngine()->m_musicOffset);
-        float totalOffset = originalOffset + userOffset;
+        int userOffset = OffsetStorage::getOffsetForLevel(getLevelId(m_level));
+        int originalOffset = FMODAudioEngine::sharedEngine()->m_musicOffset;
+        int totalOffset = originalOffset + userOffset;
         if (totalOffset < 0) {
             int songKey = (m_level->m_songID != 0) ? m_level->m_songID
                                                    : (-m_level->m_audioTrack - 1);
@@ -51,7 +51,7 @@ bool MyPlayLayer::init(GJGameLevel* level, bool useReplay, bool dontCreateObject
             };
             collectKeys([&](int key) {
                 if (!s_paddedPathBySongKey.count(key)) {
-                    s_paddedPathBySongKey[key] = getPaddedPath(key, static_cast<int>(totalOffset));
+                    s_paddedPathBySongKey[key] = getPaddedPath(key, totalOffset);
                     LOG_DEBUG("Pre-registered song key {} to protect from cache cleanup", key);
                 }
             });
@@ -66,9 +66,9 @@ void MyPlayLayer::prepareMusic(bool dontWait) {
     LOG_DEBUG("BEFORE prepareMusic: m_musicOffset={}",
               FMODAudioEngine::sharedEngine()->m_musicOffset);
     if (m_level) {
-        float userOffset = OffsetStorage::getOffsetForLevel(getLevelId(m_level));
-        float originalOffset = static_cast<float>(FMODAudioEngine::sharedEngine()->m_musicOffset);
-        float totalOffset = originalOffset + userOffset;
+        int userOffset = OffsetStorage::getOffsetForLevel(getLevelId(m_level));
+        int originalOffset = FMODAudioEngine::sharedEngine()->m_musicOffset;
+        int totalOffset = originalOffset + userOffset;
 
         bool fixEnabled = Mod::get()->getSettingValue<bool>("negative-offset-fix");
 
@@ -82,7 +82,7 @@ void MyPlayLayer::prepareMusic(bool dontWait) {
         if (totalOffset < 0 && fixEnabled) {
             int songKey = (m_level->m_songID != 0) ? m_level->m_songID
                                                    : (-m_level->m_audioTrack - 1);
-            ensurePaddedFile(songKey, static_cast<int>(totalOffset));
+            ensurePaddedFile(songKey, totalOffset);
 
             if (!m_level->m_songIDs.empty()) {
                 auto ids = m_level->m_songIDs;
@@ -91,10 +91,10 @@ void MyPlayLayer::prepareMusic(bool dontWait) {
                     auto idStr = ids.substr(0, pos);
                     ids.erase(0, pos + 1);
                     int extraSongId = geode::utils::numFromString<int>(idStr).unwrapOr(0);
-                    ensurePaddedFile(extraSongId, static_cast<int>(totalOffset));
+                    ensurePaddedFile(extraSongId, totalOffset);
                 }
                 if (!ids.empty()) {
-                    ensurePaddedFile(geode::utils::numFromString<int>(ids).unwrapOr(0), static_cast<int>(totalOffset));
+                    ensurePaddedFile(geode::utils::numFromString<int>(ids).unwrapOr(0), totalOffset);
                 }
             }
         }
@@ -141,7 +141,7 @@ void MyFMODAudioEngine::queueStartMusic(gd::string audioFilename, float pitch,
         return;
     }
 
-    float totalOffset = s_currentTotalOffset;
+    int totalOffset = s_currentTotalOffset;
     bool fixEnabled = Mod::get()->getSettingValue<bool>("negative-offset-fix");
 
     // ── Case 1: Negative offset with fix enabled → redirect to padded WAV ──
@@ -195,7 +195,7 @@ void MyFMODAudioEngine::queueStartMusic(gd::string audioFilename, float pitch,
             return;
         }
 
-        auto paddedPath = getPaddedPath(songKey, static_cast<int>(totalOffset));
+        auto paddedPath = getPaddedPath(songKey, totalOffset);
 
         // Ensure the padded file exists
         std::error_code ec;
@@ -209,7 +209,7 @@ void MyFMODAudioEngine::queueStartMusic(gd::string audioFilename, float pitch,
                 if (!fullPath.empty()) {
                     std::filesystem::path actualSourcePath(fullPath);
                     if (std::filesystem::exists(actualSourcePath)) {
-                        int intervalMs = ((static_cast<int>(std::abs(totalOffset)) + 999) / 1000) * 1000;
+                        int intervalMs = ((std::abs(totalOffset) + 999) / 1000) * 1000;
                         if (createPaddedWavFile(actualSourcePath, paddedPath, intervalMs)) {
                             s_paddedPathBySongKey[songKey] = paddedPath;
                         }
@@ -222,8 +222,8 @@ void MyFMODAudioEngine::queueStartMusic(gd::string audioFilename, float pitch,
             // Padded file has intervalMs of silence. We need to skip
             // `remainder` ms so the effective offset equals totalOffset.
             //   remainder = intervalMs - abs(totalOffset)
-            int intervalMs = ((static_cast<int>(std::abs(totalOffset)) + 999) / 1000) * 1000;
-            int remainder = intervalMs - static_cast<int>(std::abs(totalOffset));
+            int intervalMs = ((std::abs(totalOffset) + 999) / 1000) * 1000;
+            int remainder = intervalMs - std::abs(totalOffset);
             int adjustedStart = start + remainder;
             LOG_DEBUG("queueStartMusic: negative offset, redirect {} -> {}, start {} -> {} (remainder={})",
                       audioFilename, paddedPath.string(), start, adjustedStart, remainder);
@@ -242,11 +242,11 @@ void MyFMODAudioEngine::queueStartMusic(gd::string audioFilename, float pitch,
     }
 
     // ── Case 2: Positive offset (or negative without fix) → adjust start ──
-    if (totalOffset != 0.f) {
-        int adjustedStart = start + static_cast<int>(totalOffset);
+    if (totalOffset != 0) {
+        int adjustedStart = start + totalOffset;
         if (adjustedStart < 0) adjustedStart = 0;
         LOG_DEBUG("queueStartMusic: applying offset {} to start ({} -> {}), musicID={}",
-                  static_cast<int>(totalOffset), start, adjustedStart, musicID);
+                  totalOffset, start, adjustedStart, musicID);
         start = adjustedStart;
     }
 
@@ -261,7 +261,7 @@ void MyFMODAudioEngine::queueStartMusic(gd::string audioFilename, float pitch,
 // repositioning). Follows the same pattern as jukebox.
 
 void MyFMODAudioEngine::setMusicTimeMS(unsigned int ms, bool p1, int channel) {
-    float totalOffset = s_currentTotalOffset;
+    int totalOffset = s_currentTotalOffset;
     bool fixEnabled = Mod::get()->getSettingValue<bool>("negative-offset-fix");
 
     // For negative offset with fix enabled, the padded file has intervalMs
@@ -270,8 +270,8 @@ void MyFMODAudioEngine::setMusicTimeMS(unsigned int ms, bool p1, int channel) {
     //   intervalMs = ceil(abs(totalOffset)/1000)*1000
     //   remainder = intervalMs - abs(totalOffset)
     if (totalOffset < 0 && fixEnabled) {
-        int intervalMs = ((static_cast<int>(std::abs(totalOffset)) + 999) / 1000) * 1000;
-        int remainder = intervalMs - static_cast<int>(std::abs(totalOffset));
+        int intervalMs = ((std::abs(totalOffset) + 999) / 1000) * 1000;
+        int remainder = intervalMs - std::abs(totalOffset);
         int adjustedMs = static_cast<int>(ms) + remainder;
         LOG_DEBUG("setMusicTimeMS: negative offset fix, seek {} -> {} (remainder={})",
                   ms, adjustedMs, remainder);
@@ -279,11 +279,11 @@ void MyFMODAudioEngine::setMusicTimeMS(unsigned int ms, bool p1, int channel) {
         return;
     }
 
-    if (totalOffset != 0.f) {
-        int adjustedMs = static_cast<int>(ms) + static_cast<int>(totalOffset);
+    if (totalOffset != 0) {
+        int adjustedMs = static_cast<int>(ms) + totalOffset;
         if (adjustedMs < 0) adjustedMs = 0;
         LOG_DEBUG("setMusicTimeMS: applying offset {} ({} -> {})",
-                  static_cast<int>(totalOffset), ms, adjustedMs);
+                  totalOffset, ms, adjustedMs);
         FMODAudioEngine::setMusicTimeMS(static_cast<unsigned int>(adjustedMs), p1, channel);
         return;
     }

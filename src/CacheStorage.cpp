@@ -88,10 +88,12 @@ std::filesystem::path getPaddedPath(int songKey, int totalOffset) {
     return getCacheDir() / fmt::format("padded_{}_{}.wav", songKey, intervalMs);
 }
 
-void reduceCacheToSize(int maxSizeMB, std::unordered_set<std::filesystem::path> excludedFiles) {
+// ─── Cache collection helpers ──────────────────────────────────────────────────
+
+CacheCollection collectRemovableCacheFiles(const std::unordered_set<std::filesystem::path>& excludedFiles) {
 
     auto cacheDir = getCacheDir();
-    LOG_DEBUG("reduceCacheToSize: scanning cache directory: {}", cacheDir.string());
+    LOG_DEBUG("collectRemovableCacheFiles: scanning cache directory: {}", cacheDir.string());
 
     // Normalize excluded paths for comparison
     std::unordered_set<std::filesystem::path> excludedNorm;
@@ -99,22 +101,14 @@ void reduceCacheToSize(int maxSizeMB, std::unordered_set<std::filesystem::path> 
         excludedNorm.insert(p.lexically_normal());
     }
 
-    // Collect removable files via directory scan
-    struct FileEntry {
-        std::filesystem::path path;
-        std::filesystem::file_time_type time;
-        uintmax_t size;
-    };
-    std::vector<FileEntry> removable;
-    uintmax_t totalSize = 0;
-    int totalFiles = 0;
-
+    CacheCollection result;
     std::error_code dirEc;
+
     if (std::filesystem::exists(cacheDir, dirEc)) {
-        LOG_DEBUG("reduceCacheToSize: cache dir exists, starting directory scan");
+        LOG_DEBUG("collectRemovableCacheFiles: cache dir exists, starting directory scan");
         for (auto& entry : std::filesystem::directory_iterator(cacheDir, dirEc)) {
             if (dirEc) {
-                LOG_DEBUG("reduceCacheToSize: directory iterator error: {}", dirEc.message());
+                LOG_DEBUG("collectRemovableCacheFiles: directory iterator error: {}", dirEc.message());
                 break;
             }
             if (!entry.is_regular_file(dirEc)) continue;
@@ -124,41 +118,42 @@ void reduceCacheToSize(int maxSizeMB, std::unordered_set<std::filesystem::path> 
             auto name = p.filename().string();
             if (name.find("padded_") != 0 || p.extension() != ".wav") continue;
 
-            totalFiles++;
+            result.totalFiles++;
 
             // Skip excluded files
-            if (excludedNorm.count(p.lexically_normal())) continue;
+            if (excludedNorm.count(p.lexically_normal())) {
+                result.excludedCount++;
+                continue;
+            }
 
             auto ft = entry.last_write_time(dirEc);
             if (dirEc) { dirEc.clear(); continue; }
             auto fs = entry.file_size(dirEc);
             if (dirEc) { dirEc.clear(); continue; }
 
-            removable.push_back({entry.path(), ft, fs});
-            totalSize += fs;
+            result.removable.push_back({entry.path(), ft, fs});
+            result.totalSize += fs;
         }
     }
 
-    uintmax_t maxSizeBytes = static_cast<uintmax_t>(maxSizeMB) * 1024ULL * 1024ULL;
-    LOG_DEBUG("reduceCacheToSize: {} removable files, {:.1f} MB / {} MB ({} excluded, {} total on disk)",
-              removable.size(),
-              static_cast<double>(totalSize) / (1024.0 * 1024.0),
-              maxSizeMB, excludedNorm.size(), totalFiles);
+    LOG_DEBUG("collectRemovableCacheFiles: found {} removable files ({:.1f} MB, {} excluded, {} total on disk)",
+              result.removable.size(),
+              static_cast<double>(result.totalSize) / (1024.0 * 1024.0),
+              result.excludedCount, result.totalFiles);
 
-    if (totalSize <= maxSizeBytes) {
-        LOG_DEBUG("reduceCacheToSize: cache size OK, no cleanup needed");
-        return;
-    }
+    return result;
+}
 
+/// Delete files from \c collection (sorted oldest-first) until \p target bytes are freed.
+/// Returns the number of bytes actually freed.
+static uintmax_t deleteOldestFiles(std::vector<FileEntry>& files, uintmax_t target) {
     // Sort oldest-first
-    std::sort(removable.begin(), removable.end(),
+    std::sort(files.begin(), files.end(),
         [](const FileEntry& a, const FileEntry& b) { return a.time < b.time; });
 
-    // Delete oldest files until under limit
-    uintmax_t target = totalSize - maxSizeBytes;
     uintmax_t freed = 0;
     int deleted = 0;
-    for (auto& entry : removable) {
+    for (auto& entry : files) {
         std::error_code rmEc;
         std::filesystem::remove(entry.path, rmEc);
         if (!rmEc) {
@@ -172,10 +167,31 @@ void reduceCacheToSize(int maxSizeMB, std::unordered_set<std::filesystem::path> 
         if (freed >= target) break;
     }
 
-    LOG_DEBUG("reduceCacheToSize: done, {:.1f} MB over limit, freed {:.1f} MB, deleted {} file(s)",
+    LOG_DEBUG("deleteOldestFiles: freed {:.1f} MB, deleted {} file(s)",
+              static_cast<double>(freed) / (1024.0 * 1024.0), deleted);
+    return freed;
+}
+
+void reduceCacheToSize(int maxSizeMB, std::unordered_set<std::filesystem::path> excludedFiles) {
+
+    auto collection = collectRemovableCacheFiles(excludedFiles);
+
+    uintmax_t maxSizeBytes = static_cast<uintmax_t>(maxSizeMB) * 1024ULL * 1024ULL;
+    LOG_DEBUG("reduceCacheToSize: {:.1f} MB / {} MB limit",
+              static_cast<double>(collection.totalSize) / (1024.0 * 1024.0),
+              maxSizeMB);
+
+    if (collection.totalSize <= maxSizeBytes) {
+        LOG_DEBUG("reduceCacheToSize: cache size OK, no cleanup needed");
+        return;
+    }
+
+    uintmax_t target = collection.totalSize - maxSizeBytes;
+    uintmax_t freed = deleteOldestFiles(collection.removable, target);
+
+    LOG_DEBUG("reduceCacheToSize: done, {:.1f} MB over limit, freed {:.1f} MB",
               static_cast<double>(target) / (1024.0 * 1024.0),
-              static_cast<double>(freed) / (1024.0 * 1024.0),
-              deleted);
+              static_cast<double>(freed) / (1024.0 * 1024.0));
 }
 
 void enforceCacheSizeLimit() {

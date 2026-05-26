@@ -12,11 +12,11 @@ protected:
     TextInput* m_offsetInput;
     int m_levelId;
 
-    bool setup(GJGameLevel* level, float currentOffset);
+    bool setup(GJGameLevel* level, int currentOffset);
     void onApply(CCObject*);
     void onCancel(CCObject*);
     void onClearCache(CCObject*);
 
 public:
-    static OffsetPopup* create(GJGameLevel* level, float currentOffset);
+    static OffsetPopup* create(GJGameLevel* level, int currentOffset);
 };

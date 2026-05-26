@@ -2,7 +2,7 @@
 #include "CacheStorage.hpp"
 #include "LevelUtils.hpp"
 
-bool OffsetPopup::setup(GJGameLevel* level, float currentOffset) {
+bool OffsetPopup::setup(GJGameLevel* level, int currentOffset) {
     m_levelId = getLevelId(level);
     this->setTitle("Level Song Offset");
 
@@ -13,8 +13,8 @@ bool OffsetPopup::setup(GJGameLevel* level, float currentOffset) {
 
     // Text input
     m_offsetInput = TextInput::create(200.f, "0", "bigFont.fnt");
-    m_offsetInput->setString(fmt::format("{:.0f}", currentOffset));
-    m_offsetInput->setCommonFilter(CommonFilter::Float);
+    m_offsetInput->setString(fmt::format("{}", currentOffset));
+    m_offsetInput->setCommonFilter(CommonFilter::Int);
     m_offsetInput->setMaxCharCount(8);
     m_mainLayer->addChildAtPosition(m_offsetInput, Anchor::Center, ccp(0, -5));
 
@@ -26,11 +26,11 @@ bool OffsetPopup::setup(GJGameLevel* level, float currentOffset) {
     );
 
     // Cancel button
-    auto cancelBtn = CCMenuItemSpriteExtra::create(
-        ButtonSprite::create("Cancel"),
-        this,
-        menu_selector(OffsetPopup::onCancel)
-    );
+    // auto cancelBtn = CCMenuItemSpriteExtra::create(
+    //     ButtonSprite::create("Cancel"),
+    //     this,
+    //     menu_selector(OffsetPopup::onCancel)
+    // );
 
     // Delete button
     auto delBtn = CCMenuItemSpriteExtra::create(
@@ -41,7 +41,7 @@ bool OffsetPopup::setup(GJGameLevel* level, float currentOffset) {
 
     auto menu = CCMenu::create();
     menu->addChild(okBtn);
-    menu->addChild(cancelBtn);
+    // menu->addChild(cancelBtn);
     menu->addChild(delBtn);
     menu->alignItemsHorizontallyWithPadding(20);
     m_mainLayer->addChildAtPosition(menu, Anchor::Center, ccp(0, -50));
@@ -50,8 +50,8 @@ bool OffsetPopup::setup(GJGameLevel* level, float currentOffset) {
 }
 
 void OffsetPopup::onApply(CCObject*) {
-    float offset = 0.f;
-    auto result = numFromString<float>(m_offsetInput->getString());
+    int offset = 0;
+    auto result = numFromString<int>(m_offsetInput->getString());
     if (result) {
         offset = result.unwrap();
     }
@@ -59,7 +59,7 @@ void OffsetPopup::onApply(CCObject*) {
     log::debug("Set offset for level {} (resolved) to {}ms", m_levelId, offset);
 
     Notification::create(
-        fmt::format("Offset set to {:.0f}ms for level {}", offset, m_levelId),
+        fmt::format("Offset set to {}ms for level {}", offset, m_levelId),
         NotificationIcon::Success
     )->show();
 
@@ -71,19 +71,31 @@ void OffsetPopup::onCancel(CCObject*) {
 }
 
 void OffsetPopup::onClearCache(CCObject*) {
+
+    auto collection = collectRemovableCacheFiles({});
+
+    if(collection.totalFiles<=0){
+        Notification::create(
+            "No files cached for negative audio offset",
+            NotificationIcon::Success
+        )->show();
+        return;
+    }
+
     createQuickPopup(
         "Clear Cache",
-        "Are you sure you want to clear all cached delayed audio files? Original songs won't be deleted.",
-        "Cancel", "Clear",
-        [](auto, bool btn2) {
+        fmt::format("Are you sure you want to delete all cache? ({:.2f} MB)\n Original song files won't be deleted.\nCache will regenerate when audio offset is negative.",
+            static_cast<double>(collection.totalSize) / (1024.0 * 1024.0)),
+        "Cancel", "Delete",
+        [collection](auto, bool btn2) mutable {
             if (btn2) {
-                reduceCacheToSize(0, {});
+                deleteOldestFiles(collection.removable, 0);
             }
         }
     );
 }
 
-OffsetPopup* OffsetPopup::create(GJGameLevel* level, float currentOffset) {
+OffsetPopup* OffsetPopup::create(GJGameLevel* level, int currentOffset) {
     auto ret = new OffsetPopup();
     if (ret->init(280.f, 180.f)) {
         ret->setup(level, currentOffset);
