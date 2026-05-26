@@ -5,6 +5,7 @@
 #include <Geode/modify/FMODAudioEngine.hpp>
 
 #include <fmod.hpp>
+#include <cmath>
 
 using namespace geode::prelude;
 
@@ -97,6 +98,7 @@ static bool createPaddedWavFile(
     // Build padded buffer: [silence (zeroes)] [original PCM]
     unsigned int totalDataSize = padBytes + srcLengthBytes;
     std::vector<uint8_t> paddedData(totalDataSize, 0);
+
     std::memcpy(paddedData.data() + padBytes, srcPtr1, srcLen1);
     if (srcPtr2 && srcLen2 > 0) {
         std::memcpy(paddedData.data() + padBytes + srcLen1, srcPtr2, srcLen2);
@@ -104,6 +106,42 @@ static bool createPaddedWavFile(
 
     srcSound->unlock(srcPtr1, srcPtr2, srcLen1, srcLen2);
     srcSound->release();
+
+    // Optionally inject periodic beeps across the ENTIRE audio for debugging.
+    // This lets us verify whether the padded file is actually being played
+    // (beeps audible) or not (no beeps), even after the silence padding ends.
+    bool debugBeep = Mod::get()->getSettingValue<bool>("debug-beep-in-padding");
+    if (debugBeep && bitsPerSample == 16) {
+        // Beep: 100 ms of 1 kHz sine wave, repeated every 500 ms
+        unsigned int beepSamples   = (sampleRate * 100) / 1000;
+        unsigned int beepInterval  = (sampleRate * 500) / 1000;
+        unsigned int intervalBytes = beepInterval * blockAlign;
+
+        // Precompute a single beep waveform (16-bit)
+        std::vector<int16_t> beepMono(beepSamples);
+        for (unsigned int i = 0; i < beepSamples; i++) {
+            double t = static_cast<double>(i) / sampleRate;
+            beepMono[i] = static_cast<int16_t>(std::sin(2.0 * M_PI * 1000.0 * t) * 13000.0);
+        }
+
+        // Write beeps across the full audio buffer
+        unsigned int totalSamples = totalDataSize / blockAlign;
+        for (unsigned int sampleOffset = 0;
+             sampleOffset + beepSamples <= totalSamples;
+             sampleOffset += beepInterval)
+        {
+            for (unsigned int s = 0; s < beepSamples; s++) {
+                unsigned int bytePos = (sampleOffset + s) * blockAlign;
+                if (bytePos + blockAlign > totalDataSize) break;
+                for (int ch = 0; ch < numChannels; ch++) {
+                    int16_t sample = beepMono[s];
+                    std::memcpy(paddedData.data() + bytePos + ch * 2, &sample, 2);
+                }
+            }
+        }
+        log::info("Debug beep: injected {}ms beeps every {}ms across full audio ({} total)",
+                  100, 500, totalDataSize / blockAlign / sampleRate * 1000);
+    }
 
     // Write WAV header + data
     WavHeader header;
@@ -144,6 +182,27 @@ static std::unordered_map<int, std::filesystem::path> s_paddedPathBySongKey;
 /// Get the song key for a GJGameLevel's current song.
 static int getSongKey(GJGameLevel* level) {
     return (level->m_songID != 0) ? level->m_songID : (-level->m_audioTrack - 1);
+}
+
+/// Try to extract a numeric song ID from a path like "123456.mp3" or
+/// "/full/path/123456.ogg". Returns -1 if no numeric ID found.
+static int extractSongIdFromPath(std::string_view path) {
+    // Get the stem (filename without extension)
+    auto pos = path.rfind('/');
+    if (pos == std::string_view::npos) pos = path.rfind('\\');
+    auto filename = (pos == std::string_view::npos) ? path : path.substr(pos + 1);
+
+    // Remove extension
+    auto dot = filename.rfind('.');
+    auto stem = (dot == std::string_view::npos) ? filename : filename.substr(0, dot);
+
+    // Try to parse as integer
+    int id = 0;
+    auto result = std::from_chars(stem.data(), stem.data() + stem.size(), id);
+    if (result.ec == std::errc() && result.ptr == stem.data() + stem.size()) {
+        return id;
+    }
+    return -1;
 }
 
 /// Resolve the cache directory from settings or fall back to the mod save dir.
@@ -312,6 +371,131 @@ class $modify(NegativeOffsetGJGameLevel, GJGameLevel) {
         );
 
         return gd::string(paddedPath.string());
+    }
+};
+
+// ─── Hook: FMODAudioEngine::queueStartMusic ──────────────────────────────────
+// Song Triggers call this method directly, bypassing getAudioFileName.
+// We intercept it to redirect the audio path to the padded version when a
+// negative offset workaround is active.
+//
+// This follows the same pattern used by jukebox for NONG song replacement.
+
+class $modify(PaddedQueueMusicFMODAudioEngine, FMODAudioEngine) {
+    void queueStartMusic(gd::string audioFilename, float pitch, float unknown,
+                         float volume, bool loop, int start, int end,
+                         int fadeIn, int fadeOut, int musicID, bool p10,
+                         int channelID, bool noPrepare, bool dontReset) {
+        // If the path is already a padded file, pass through
+        if (audioFilename.find("padded_") != gd::string::npos) {
+            FMODAudioEngine::queueStartMusic(
+                audioFilename, pitch, unknown, volume, loop, start, end,
+                fadeIn, fadeOut, musicID, p10, channelID, noPrepare, dontReset
+            );
+            return;
+        }
+
+        // Check if this path should be redirected
+        auto* pl = PlayLayer::get();
+        if (!pl || !pl->m_level) {
+            FMODAudioEngine::queueStartMusic(
+                audioFilename, pitch, unknown, volume, loop, start, end,
+                fadeIn, fadeOut, musicID, p10, channelID, noPrepare, dontReset
+            );
+            return;
+        }
+
+        bool fixEnabled = Mod::get()->getSettingValue<bool>("negative-offset-fix");
+        if (!fixEnabled) {
+            FMODAudioEngine::queueStartMusic(
+                audioFilename, pitch, unknown, volume, loop, start, end,
+                fadeIn, fadeOut, musicID, p10, channelID, noPrepare, dontReset
+            );
+            return;
+        }
+
+        float userOffset = OffsetStorage::getOffsetForLevel(pl->m_level->m_levelID);
+        int totalOffset = FMODAudioEngine::sharedEngine()->m_musicOffset
+                          + static_cast<int>(userOffset);
+        if (totalOffset >= 0) {
+            FMODAudioEngine::queueStartMusic(
+                audioFilename, pitch, unknown, volume, loop, start, end,
+                fadeIn, fadeOut, musicID, p10, channelID, noPrepare, dontReset
+            );
+            return;
+        }
+
+        // Extract song ID from the audio filename
+        int songIdFromPath = extractSongIdFromPath(std::string_view(audioFilename));
+        if (songIdFromPath < 0) {
+            FMODAudioEngine::queueStartMusic(
+                audioFilename, pitch, unknown, volume, loop, start, end,
+                fadeIn, fadeOut, musicID, p10, channelID, noPrepare, dontReset
+            );
+            return;
+        }
+
+        int songKey = songIdFromPath;
+
+        // Verify this song key is relevant to the current level
+        int levelSongKey = getSongKey(pl->m_level);
+        bool relevant = (songKey == levelSongKey);
+        if (!relevant && !pl->m_level->m_songIDs.empty()) {
+            auto ids = pl->m_level->m_songIDs;
+            size_t p = 0;
+            while ((p = ids.find(',')) != gd::string::npos) {
+                auto idStr = ids.substr(0, p);
+                ids.erase(0, p + 1);
+                try { if (std::stoi(idStr) == songKey) { relevant = true; break; } }
+                catch (...) {}
+            }
+            if (!relevant && !ids.empty()) {
+                try { if (std::stoi(ids) == songKey) relevant = true; }
+                catch (...) {}
+            }
+        }
+        if (!relevant) {
+            FMODAudioEngine::queueStartMusic(
+                audioFilename, pitch, unknown, volume, loop, start, end,
+                fadeIn, fadeOut, musicID, p10, channelID, noPrepare, dontReset
+            );
+            return;
+        }
+
+        int absTotal = std::abs(totalOffset);
+        int intervalMs = ((absTotal + 999) / 1000) * 1000;
+        auto paddedPath = getCacheDir() / fmt::format("padded_{}_{}.wav", songKey, intervalMs);
+
+        // Ensure the padded file exists
+        std::error_code ec;
+        if (!std::filesystem::exists(paddedPath, ec)) {
+            // Locate the original source file
+            auto* fileUtils = CCFileUtils::sharedFileUtils();
+            std::string fullPath = fileUtils->fullPathForFilename(audioFilename.c_str(), false);
+            if (!fullPath.empty()) {
+                std::filesystem::path actualSourcePath(fullPath);
+                if (std::filesystem::exists(actualSourcePath)) {
+                    if (createPaddedWavFile(actualSourcePath, paddedPath, intervalMs)) {
+                        enforceCacheSizeLimit();
+                        s_paddedPathBySongKey[songKey] = paddedPath;
+                    }
+                }
+            }
+        }
+
+        if (std::filesystem::exists(paddedPath, ec)) {
+            log::info("Song trigger redirected: {} -> {}", audioFilename, paddedPath.string());
+            FMODAudioEngine::queueStartMusic(
+                gd::string(paddedPath.string()), pitch, unknown, volume, loop,
+                start, end, fadeIn, fadeOut, musicID, p10, channelID,
+                noPrepare, dontReset
+            );
+        } else {
+            FMODAudioEngine::queueStartMusic(
+                audioFilename, pitch, unknown, volume, loop, start, end,
+                fadeIn, fadeOut, musicID, p10, channelID, noPrepare, dontReset
+            );
+        }
     }
 };
 

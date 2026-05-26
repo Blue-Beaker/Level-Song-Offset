@@ -38,6 +38,12 @@
 			"description": "Enable detailed offset-related logging for debugging",
 			"type": "bool",
 			"default": false
+		},
+		"debug-beep-in-padding": {
+			"name": "Debug: Beep in Padding",
+			"description": "Add periodic beep tones in the silent padding to verify the padded audio is being used. Each beep = 100ms, every 500ms",
+			"type": "bool",
+			"default": false
 		}
 	},
 	"resources": {
