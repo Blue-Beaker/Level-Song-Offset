@@ -6,16 +6,16 @@
 using namespace geode::prelude;
 
 /**
- * Manages per-level song offset for the *positive* offset case.
+ * Manages per-level song offset.
  *
- * Positive offset: music starts at |offset| ms into the song (skips the
- * beginning).  Implemented by setting FMODAudioEngine::m_musicOffset before
- * PlayLayer::startMusic() is called — this is GD's native mechanism.
- *
- * Negative offset handling has been moved to NegativeOffsetWorkaround.
+ * Offset is applied in PlayLayer::prepareMusic (the last chance before
+ * GD reads GameManager::m_timeOffset to start music playback).
+ * Positive offset skips that many ms; negative offset with fix enabled
+ * redirects to a padded WAV file.
  */
 class $modify(MyPlayLayer, PlayLayer) {
     bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects);
+    void prepareMusic(bool dontWait);
     void startMusic();
     void onQuit();
 };

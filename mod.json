@@ -12,17 +12,17 @@
 	"developer": "BlueBeaker",
 	"description": "",
 	"settings": {
-		"show-offset-indicator": {
-			"name": "Show Offset Indicator",
-			"description": "Show a visual indicator of the current offset in-game",
-			"type": "bool",
-			"default": true
-		},
 		"negative-offset-fix": {
 			"name": "Negative Offset Workaround",
 			"description": "Automatically use workaround for the bug with negative offset",
 			"type": "bool",
 			"default": true
+		},
+		"debug-logging": {
+			"name": "Debug Logging",
+			"description": "Enable detailed offset-related logging for debugging",
+			"type": "bool",
+			"default": false
 		}
 	},
 	"dependencies": {

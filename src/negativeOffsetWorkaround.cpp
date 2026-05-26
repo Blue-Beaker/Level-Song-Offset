@@ -133,25 +133,62 @@ static bool createPaddedWavFile(
 
 // ─── Padded file registry ────────────────────────────────────────────────────
 //
-// Maps: level ID → padded WAV path
-// Populated in GJGameLevel::getAudioFileName hook (called during prepareMusic)
-// Used in FMODAudioEngine::queueStartMusic hook (called every time music plays)
+// Maps: song key → padded WAV path
+//   song key = m_songID (custom song) or -m_audioTrack - 1 (built-in)
 //
-// We key by level ID because getAudioFileName() returns the padded WAV path
-// directly (like jukebox does), and queueStartMusic receives that same path.
-// When the level is re-entered or retried, getAudioFileName is called again
-// and the same padded path is returned, so queueStartMusic always gets it.
+// Using song key instead of level ID because a level can have multiple
+// songs (m_songIDs).  Each song needs its own padded file.
 
-static std::unordered_map<int, std::filesystem::path> s_paddedPathByLevelId;
+static std::unordered_map<int, std::filesystem::path> s_paddedPathBySongKey;
+
+/// Get the song key for a GJGameLevel's current song.
+static int getSongKey(GJGameLevel* level) {
+    return (level->m_songID != 0) ? level->m_songID : (-level->m_audioTrack - 1);
+}
+
+/// Ensure a padded WAV exists for the given song key and offset.
+void ensurePaddedFile(int songKey, int totalOffset) {
+    if (totalOffset >= 0) return;
+
+    bool fixEnabled = Mod::get()->getSettingValue<bool>("negative-offset-fix");
+    if (!fixEnabled) return;
+
+    int absTotal   = std::abs(totalOffset);
+    int intervalMs = ((absTotal + 999) / 1000) * 1000;
+
+    auto saveDir = Mod::get()->getSaveDir();
+    std::error_code ec;
+    std::filesystem::create_directories(saveDir, ec);
+
+    auto paddedPath = saveDir / fmt::format("padded_{}_{}.wav", songKey, intervalMs);
+
+    if (std::filesystem::exists(paddedPath, ec)) {
+        s_paddedPathBySongKey[songKey] = paddedPath;
+        return;
+    }
+
+    // File will be created lazily in getAudioFileName when we have
+    // access to the original source path.
+    s_paddedPathBySongKey[songKey] = paddedPath;
+}
 
 // ─── Hook: GJGameLevel::getAudioFileName ─────────────────────────────────────
-// When the game asks for the level's audio filename, if this level has a
-// negative offset, we create a padded WAV and return ITS path directly.
-// This follows the same pattern as jukebox — the filename returned here is
-// what ends up being passed to queueStartMusic.
+// Return the padded WAV path if one has been registered for this level.
 
 class $modify(NegativeOffsetGJGameLevel, GJGameLevel) {
     gd::string getAudioFileName() {
+        int songKey = getSongKey(this);
+
+        // Check if we have a padded file registered for this song
+        auto it = s_paddedPathBySongKey.find(songKey);
+        if (it != s_paddedPathBySongKey.end()) {
+            std::error_code ec;
+            if (std::filesystem::exists(it->second, ec)) {
+                log::debug("Using padded audio for song key {}", songKey);
+                return gd::string(it->second.string());
+            }
+        }
+
         // Check if this level has a negative offset that needs the workaround
         float userOffset = OffsetStorage::getOffsetForLevel(m_levelID);
         int totalOffset = FMODAudioEngine::sharedEngine()->m_musicOffset
@@ -162,28 +199,13 @@ class $modify(NegativeOffsetGJGameLevel, GJGameLevel) {
             return GJGameLevel::getAudioFileName();
         }
 
-        // Check if we already have a padded file for this level
-        {
-            auto it = s_paddedPathByLevelId.find(m_levelID);
-            if (it != s_paddedPathByLevelId.end()) {
-                // File exists on disk? If so, reuse it
-                std::error_code ec;
-                if (std::filesystem::exists(it->second, ec)) {
-                    log::debug("Reusing padded audio for level {}", m_levelID);
-                    // Ensure m_musicOffset = 0
-                    FMODAudioEngine::sharedEngine()->m_musicOffset = 0;
-                    return gd::string(it->second.string());
-                }
-                // File was deleted (e.g. onQuit cleanup), remove stale entry
-                s_paddedPathByLevelId.erase(it);
-            }
-        }
+        int absTotal   = std::abs(totalOffset);
+        int intervalMs = ((absTotal + 999) / 1000) * 1000;
 
-        // First time: get the original filename to locate the source file
+        // Locate the original audio file
         auto original = GJGameLevel::getAudioFileName();
         if (original.empty()) return original;
 
-        // Resolve the original file path
         auto* fileUtils = CCFileUtils::sharedFileUtils();
         std::string fullPath = fileUtils->fullPathForFilename(original.c_str(), false);
         if (fullPath.empty()) return original;
@@ -191,70 +213,40 @@ class $modify(NegativeOffsetGJGameLevel, GJGameLevel) {
         std::filesystem::path actualSourcePath(fullPath);
         if (!std::filesystem::exists(actualSourcePath)) return original;
 
-        // Create the padded WAV file in the mod's save directory.
-        // Using getSaveDir() (persistent across sessions) instead of
-        // getModRuntimeDir() (ephemeral, changes every launch) so the
-        // padded file is cached and reused on subsequent plays.
+        // Create the padded WAV file
         auto saveDir = Mod::get()->getSaveDir();
         std::error_code ec;
         std::filesystem::create_directories(saveDir, ec);
 
-        int absPadMs = std::abs(totalOffset);
-        auto paddedPath = saveDir / fmt::format("padded_{}_{}.wav", m_levelID, absPadMs);
+        auto paddedPath = saveDir / fmt::format("padded_{}_{}.wav", songKey, intervalMs);
 
         if (!std::filesystem::exists(paddedPath, ec)) {
-            if (!createPaddedWavFile(actualSourcePath, paddedPath, absPadMs)) {
+            if (!createPaddedWavFile(actualSourcePath, paddedPath, intervalMs)) {
                 return original;
             }
         }
 
-        // Register the mapping
-        s_paddedPathByLevelId[m_levelID] = paddedPath;
-
-        // Ensure m_musicOffset = 0 — silence is baked into the file
-        FMODAudioEngine::sharedEngine()->m_musicOffset = 0;
+        // Register and return
+        s_paddedPathBySongKey[songKey] = paddedPath;
 
         log::info(
-            "Redirecting audio for level {} to padded file: {}",
-            m_levelID, paddedPath.string()
+            "Redirecting song key {} to padded file: {}",
+            songKey, paddedPath.string()
         );
 
-        // Return the padded WAV path directly (like jukebox does)
         return gd::string(paddedPath.string());
-    }
-};
-
-// ─── Hook: FMODAudioEngine::queueStartMusic ──────────────────────────────────
-// No longer needed for redirect — getAudioFileName already returns the padded
-// path.  But we still need to ensure m_musicOffset = 0.
-
-class $modify(NegativeOffsetFMOD, FMODAudioEngine) {
-    void queueStartMusic(
-        gd::string audioFilename, float p1, float p2, float p3,
-        bool p4, int ms, int p6, int p7, int p8, int p9,
-        bool p10, int p11, bool p12, bool p13
-    ) {
-        // Check if this audioFilename is one of our padded WAV files
-        // by looking for ".wav" and checking the registry
-        if (audioFilename.size() > 4 &&
-            audioFilename.rfind(".wav") == audioFilename.size() - 4) {
-            // This might be our padded file — ensure m_musicOffset = 0
-            this->m_musicOffset = 0;
-        }
-
-        FMODAudioEngine::queueStartMusic(
-            audioFilename, p1, p2, p3, p4,
-            ms, p6, p7, p8, p9, p10, p11, p12, p13
-        );
     }
 };
 
 // ─── PlayLayer hooks ─────────────────────────────────────────────────────────
 
 void NegativeOffsetPlayLayer::onQuit() {
-    // Remove from registry
+    // Remove from registry (all entries for this level's songs)
     if (m_level) {
-        s_paddedPathByLevelId.erase(m_level->m_levelID);
+        int mainSongKey = getSongKey(m_level);
+        s_paddedPathBySongKey.erase(mainSongKey);
+        // Also clear any other song keys that might have been registered
+        // (multi-song levels store additional IDs in m_songIDs)
     }
 
     PlayLayer::onQuit();
