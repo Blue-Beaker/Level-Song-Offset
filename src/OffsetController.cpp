@@ -29,8 +29,39 @@ bool MyPlayLayer::init(GJGameLevel* level, bool useReplay, bool dontCreateObject
 
     s_originalMusicOffset[this] = FMODAudioEngine::sharedEngine()->m_musicOffset;
 
-    // Run cache cleanup once per level load (triggered by clicking "play").
-    enforceCacheSizeLimit();
+    // Pre-register all song keys for this level in s_paddedPathBySongKey,
+    // so cache cleanup won't delete files we're about to use.
+    if (m_level && Mod::get()->getSettingValue<bool>("negative-offset-fix")) {
+        float userOffset = OffsetStorage::getOffsetForLevel(m_level);
+        float originalOffset = static_cast<float>(s_originalMusicOffset[this]);
+        float totalOffset = originalOffset + userOffset;
+        if (totalOffset < 0) {
+            int songKey = (m_level->m_songID != 0) ? m_level->m_songID
+                                                   : (-m_level->m_audioTrack - 1);
+            auto collectKeys = [&](auto&& cb) {
+                cb(songKey);
+                if (!m_level->m_songIDs.empty()) {
+                    auto ids = m_level->m_songIDs;
+                    size_t pos = 0;
+                    while ((pos = ids.find(',')) != gd::string::npos) {
+                        auto idStr = ids.substr(0, pos);
+                        ids.erase(0, pos + 1);
+                        try { cb(std::stoi(idStr)); } catch (...) {}
+                    }
+                    if (!ids.empty()) {
+                        try { cb(std::stoi(ids)); } catch (...) {}
+                    }
+                }
+            };
+            collectKeys([&](int key) {
+                if (!s_paddedPathBySongKey.count(key)) {
+                    s_paddedPathBySongKey[key] = getPaddedPath(key, static_cast<int>(totalOffset));
+                    LOG_DEBUG("Pre-registered song key {} to protect from cache cleanup", key);
+                }
+            });
+            enforceCacheSizeLimit();
+        }
+    }
 
     return true;
 }
@@ -72,7 +103,12 @@ void MyPlayLayer::prepareMusic(bool dontWait) {
                 }
             }
 
+            // Run cache cleanup once per PlayLayer. Before that, ensure all
+            // song keys used by this level are registered in s_paddedPathBySongKey
+            // (with whatever path they already have or will have), so the cleanup
+            // doesn't delete files this level is about to use.
             int intervalMs = ((absTotal + 999) / 1000) * 1000;
+
             int remainder  = intervalMs - absTotal;
             // Set m_musicOffset directly — this is what PlayLayer::startMusic
             // reads.  Leave GameManager::m_timeOffset untouched so the
@@ -202,9 +238,7 @@ void MyFMODAudioEngine::queueStartMusic(gd::string audioFilename, float pitch,
             return;
         }
 
-        int absTotal = static_cast<int>(std::abs(totalOffset));
-        int intervalMs = ((absTotal + 999) / 1000) * 1000;
-        auto paddedPath = getCacheDir() / fmt::format("padded_{}_{}.wav", songKey, intervalMs);
+        auto paddedPath = getPaddedPath(songKey, static_cast<int>(totalOffset));
 
         // Ensure the padded file exists
         std::error_code ec;
@@ -220,6 +254,7 @@ void MyFMODAudioEngine::queueStartMusic(gd::string audioFilename, float pitch,
                 if (!fullPath.empty()) {
                     std::filesystem::path actualSourcePath(fullPath);
                     if (std::filesystem::exists(actualSourcePath)) {
+                        int intervalMs = ((static_cast<int>(std::abs(totalOffset)) + 999) / 1000) * 1000;
                         if (createPaddedWavFile(actualSourcePath, paddedPath, intervalMs)) {
                             s_paddedPathBySongKey[songKey] = paddedPath;
                         }

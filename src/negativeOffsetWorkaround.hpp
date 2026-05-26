@@ -41,6 +41,10 @@ std::filesystem::path getCacheDir();
 /// Enforce the max cache size: delete oldest padded files when exceeded.
 void enforceCacheSizeLimit();
 
+/// Compute the padded WAV path for a given song key and total offset (ms).
+/// e.g. getPaddedPath(837148, -1500) → /cache/padded_837148_2000.wav
+std::filesystem::path getPaddedPath(int songKey, int totalOffset);
+
 /// Decode source audio to PCM, prepend silence, write as WAV.
 bool createPaddedWavFile(
     const std::filesystem::path& sourcePath,

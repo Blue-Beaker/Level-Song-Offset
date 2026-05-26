@@ -348,6 +348,13 @@ void enforceCacheSizeLimit() {
               deleted);
 }
 
+/// Compute the padded WAV path for a given song key and total offset (ms).
+std::filesystem::path getPaddedPath(int songKey, int totalOffset) {
+    int absTotal = std::abs(totalOffset);
+    int intervalMs = ((absTotal + 999) / 1000) * 1000;
+    return getCacheDir() / fmt::format("padded_{}_{}.wav", songKey, intervalMs);
+}
+
 /// Ensure a padded WAV exists for the given song key and offset.
 /// Creates the padded file eagerly if it doesn't exist yet, using
 /// MusicDownloadManager to locate the original source file.
@@ -358,10 +365,7 @@ void ensurePaddedFile(int songKey, int totalOffset) {
     bool fixEnabled = Mod::get()->getSettingValue<bool>("negative-offset-fix");
     if (!fixEnabled) return;
 
-    int absTotal   = std::abs(totalOffset);
-    int intervalMs = ((absTotal + 999) / 1000) * 1000;
-
-    auto paddedPath = getCacheDir() / fmt::format("padded_{}_{}.wav", songKey, intervalMs);
+    auto paddedPath = getPaddedPath(songKey, totalOffset);
 
     std::error_code ec;
     if (std::filesystem::exists(paddedPath, ec)) {
@@ -380,6 +384,7 @@ void ensurePaddedFile(int songKey, int totalOffset) {
     std::filesystem::path actualSourcePath(originalPath);
     if (!std::filesystem::exists(actualSourcePath)) return;
 
+    int intervalMs = ((std::abs(totalOffset) + 999) / 1000) * 1000;
     if (createPaddedWavFile(actualSourcePath, paddedPath, intervalMs)) {
         s_paddedPathBySongKey[songKey] = paddedPath;
         log::info("Eagerly created padded file for song key {}: {}", songKey, paddedPath.string());
@@ -414,7 +419,6 @@ class $modify(NegativeOffsetGJGameLevel, GJGameLevel) {
         }
 
         int absTotal   = static_cast<int>(std::abs(totalOffset));
-        int intervalMs = ((absTotal + 999) / 1000) * 1000;
 
         // Locate the original audio file
         auto original = GJGameLevel::getAudioFileName();
@@ -428,10 +432,9 @@ class $modify(NegativeOffsetGJGameLevel, GJGameLevel) {
         if (!std::filesystem::exists(actualSourcePath)) return original;
 
         // Create the padded WAV file in the configured cache directory
-        auto cacheDir = getCacheDir();
+        auto paddedPath = getPaddedPath(songKey, static_cast<int>(totalOffset));
+        int intervalMs = ((absTotal + 999) / 1000) * 1000;
         std::error_code ec;
-
-        auto paddedPath = cacheDir / fmt::format("padded_{}_{}.wav", songKey, intervalMs);
 
         if (!std::filesystem::exists(paddedPath, ec)) {
             if (!createPaddedWavFile(actualSourcePath, paddedPath, intervalMs)) {
