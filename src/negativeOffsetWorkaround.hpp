@@ -31,6 +31,7 @@ extern std::unordered_map<int, std::filesystem::path> s_paddedPathBySongKey;
 /// Get the song key for a GJGameLevel's current song.
 int getSongKey(GJGameLevel* level);
 
+// @geode-ignore(unknown-resource)
 /// Try to extract a numeric song ID from a path like "123456.mp3".
 int extractSongIdFromPath(std::string_view path);
 

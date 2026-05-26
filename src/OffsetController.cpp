@@ -41,10 +41,10 @@ bool MyPlayLayer::init(GJGameLevel* level, bool useReplay, bool dontCreateObject
                     while ((pos = ids.find(',')) != gd::string::npos) {
                         auto idStr = ids.substr(0, pos);
                         ids.erase(0, pos + 1);
-                        try { cb(std::stoi(idStr)); } catch (...) {}
+                        try { cb(geode::utils::numFromString<int>(idStr).unwrapOr(0)); } catch (...) {}
                     }
                     if (!ids.empty()) {
-                        try { cb(std::stoi(ids)); } catch (...) {}
+                        try { cb(geode::utils::numFromString<int>(ids).unwrapOr(0)); } catch (...) {}
                     }
                 }
             };
@@ -89,11 +89,11 @@ void MyPlayLayer::prepareMusic(bool dontWait) {
                 while ((pos = ids.find(',')) != gd::string::npos) {
                     auto idStr = ids.substr(0, pos);
                     ids.erase(0, pos + 1);
-                    int extraSongId = std::stoi(idStr);
+                    int extraSongId = geode::utils::numFromString<int>(idStr).unwrapOr(0);
                     ensurePaddedFile(extraSongId, static_cast<int>(totalOffset));
                 }
                 if (!ids.empty()) {
-                    ensurePaddedFile(std::stoi(ids), static_cast<int>(totalOffset));
+                    ensurePaddedFile(geode::utils::numFromString<int>(ids).unwrapOr(0), static_cast<int>(totalOffset));
                 }
             }
         }
@@ -178,11 +178,11 @@ void MyFMODAudioEngine::queueStartMusic(gd::string audioFilename, float pitch,
             while ((p = ids.find(',')) != gd::string::npos) {
                 auto idStr = ids.substr(0, p);
                 ids.erase(0, p + 1);
-                try { if (std::stoi(idStr) == songKey) { relevant = true; break; } }
+                try { if (geode::utils::numFromString<int>(idStr).unwrapOr(0) == songKey) { relevant = true; break; } }
                 catch (...) {}
             }
             if (!relevant && !ids.empty()) {
-                try { if (std::stoi(ids) == songKey) relevant = true; }
+                try { if (geode::utils::numFromString<int>(ids).unwrapOr(0) == songKey) relevant = true; }
                 catch (...) {}
             }
         }

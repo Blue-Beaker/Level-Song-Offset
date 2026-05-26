@@ -188,6 +188,7 @@ int getSongKey(GJGameLevel* level) {
     return (level->m_songID != 0) ? level->m_songID : (-level->m_audioTrack - 1);
 }
 
+// @geode-ignore(unknown-resource)
 /// Try to extract a numeric song ID from a path like "123456.mp3" or
 /// "/full/path/123456.ogg". Returns -1 if no numeric ID found.
 int extractSongIdFromPath(std::string_view path) {
@@ -469,10 +470,10 @@ void NegativeOffsetPlayLayer::onQuit() {
             while ((pos = ids.find(',')) != gd::string::npos) {
                 auto idStr = ids.substr(0, pos);
                 ids.erase(0, pos + 1);
-                try { s_paddedPathBySongKey.erase(std::stoi(idStr)); } catch (...) {}
+                try { s_paddedPathBySongKey.erase(geode::utils::numFromString<int>(idStr).unwrapOr(0)); } catch (...) {}
             }
             if (!ids.empty()) {
-                try { s_paddedPathBySongKey.erase(std::stoi(ids)); } catch (...) {}
+                try { s_paddedPathBySongKey.erase(geode::utils::numFromString<int>(ids).unwrapOr(0)); } catch (...) {}
             }
         }
     }
