@@ -22,19 +22,7 @@ public:
     static float getOffsetForLevel(int levelId);
 
     /**
-     * Get the stored offset for a level object.
-     * Automatically resolves editor level IDs via EditorIDs API.
-     */
-    static float getOffsetForLevel(GJGameLevel* level);
-
-    /**
      * Set the offset for a given level and persist to save data.
      */
     static void setOffsetForLevel(int levelId, float offset);
-
-    /**
-     * Set the offset for a level object.
-     * Automatically resolves editor level IDs via EditorIDs API.
-     */
-    static void setOffsetForLevel(GJGameLevel* level, float offset);
 };

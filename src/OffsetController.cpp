@@ -1,6 +1,7 @@
 #include "OffsetController.hpp"
 #include "OffsetStorage.hpp"
 #include "negativeOffsetWorkaround.hpp"
+#include "LevelUtils.hpp"
 
 using namespace geode::prelude;
 
@@ -27,7 +28,7 @@ bool MyPlayLayer::init(GJGameLevel* level, bool useReplay, bool dontCreateObject
     // Pre-register all song keys for this level in s_paddedPathBySongKey,
     // so cache cleanup won't delete files we're about to use.
     if (m_level && Mod::get()->getSettingValue<bool>("negative-offset-fix")) {
-        float userOffset = OffsetStorage::getOffsetForLevel(m_level);
+        float userOffset = OffsetStorage::getOffsetForLevel(getLevelId(m_level));
         float originalOffset = static_cast<float>(FMODAudioEngine::sharedEngine()->m_musicOffset);
         float totalOffset = originalOffset + userOffset;
         if (totalOffset < 0) {
@@ -65,14 +66,14 @@ void MyPlayLayer::prepareMusic(bool dontWait) {
     LOG_DEBUG("BEFORE prepareMusic: m_musicOffset={}",
               FMODAudioEngine::sharedEngine()->m_musicOffset);
     if (m_level) {
-        float userOffset = OffsetStorage::getOffsetForLevel(m_level);
+        float userOffset = OffsetStorage::getOffsetForLevel(getLevelId(m_level));
         float originalOffset = static_cast<float>(FMODAudioEngine::sharedEngine()->m_musicOffset);
         float totalOffset = originalOffset + userOffset;
 
         bool fixEnabled = Mod::get()->getSettingValue<bool>("negative-offset-fix");
 
         LOG_DEBUG("prepareMusic: level={}, userOffset={}, originalOffset={}, totalOffset={}, fixEnabled={}",
-                  m_level->m_levelID, userOffset, originalOffset, totalOffset, fixEnabled);
+                  getLevelId(m_level), userOffset, originalOffset, totalOffset, fixEnabled);
 
         // Save totalOffset for use by getAudioFileName, queueStartMusic,
         // and setMusicTimeMS hooks.
