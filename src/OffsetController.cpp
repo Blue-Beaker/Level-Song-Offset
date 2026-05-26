@@ -6,10 +6,6 @@ using namespace geode::prelude;
 // Stores the original FMODAudioEngine::m_musicOffset per PlayLayer instance
 static std::unordered_map<PlayLayer*, int> s_originalMusicOffsets;
 
-// Re-entry guard: when set, startMusic() skips the negative-offset delay
-// and calls the original PlayLayer::startMusic() directly.
-static bool s_isDelayedStart = false;
-
 bool MyPlayLayer::init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
     if (!PlayLayer::init(level, useReplay, dontCreateObjects))
         return false;
@@ -35,10 +31,19 @@ void MyPlayLayer::startMusic() {
 
     bool negativeFixEnabled = Mod::get()->getSettingValue<bool>("negative-offset-fix");
 
-    if (totalOffset < 0 && negativeFixEnabled && !s_isDelayedStart) {
+    if (totalOffset < 0 && negativeFixEnabled) {
         // ── Negative total offset workaround ──
         // Negative offset means: delay the music by |offset| ms.
-        // Don't start music now; schedule it after the delay.
+        // Start the music normally so all GD state is set up, then
+        // pause it immediately. After the delay, seek to beginning and resume.
+        // Stop any pending delayed-start action from a previous attempt
+        // (retry/reset doesn't call onQuit, so the old action may still be alive).
+        this->stopAllActions();
+
+        audio->m_musicOffset = 0;
+        PlayLayer::startMusic();
+        audio->pauseAllMusic(true);
+
         audio->m_musicOffset = totalOffset;
 
         float delaySec = std::abs(totalOffset) / 1000.f;
@@ -51,31 +56,28 @@ void MyPlayLayer::startMusic() {
         );
     } else {
         // ── Zero or positive total offset (or fix disabled, or re-entry) ──
-        // Set m_musicOffset so PlayLayer::startMusic() uses the correct start time.
-        // On re-entry from applyDelayedMusic, m_musicOffset is already set to 0
-        // so the original function won't receive a negative start time.
-        if (!s_isDelayedStart) {
-            audio->m_musicOffset = totalOffset;
-        }
+        // Set m_musicOffset so PlayLayer::startMusic() uses the correct start time
+        audio->m_musicOffset = totalOffset;
         PlayLayer::startMusic();
     }
 }
 
 void MyPlayLayer::applyDelayedMusic() {
-    // Re-enter startMusic but bypass the delay logic.
-    // Set m_musicOffset = 0 so the original PlayLayer::startMusic() doesn't
-    // receive a negative start time (which would break FMOD).
-    s_isDelayedStart = true;
     auto* audio = FMODAudioEngine::sharedEngine();
+    // setMusicTimeMS applies m_musicOffset internally, so temporarily set
+    // it to 0 to seek to the true beginning, then restore it.
+    int savedOffset = audio->m_musicOffset;
     audio->m_musicOffset = 0;
-    PlayLayer::startMusic();
-    // Force the music to start from the beginning, in case GD's internal
-    // logic restored m_musicOffset from GameManager::m_timeOffset
     audio->setMusicTimeMS(0, false, 0);
-    s_isDelayedStart = false;
+    audio->m_musicOffset = savedOffset;
+    audio->resumeAllMusic();
 }
 
 void MyPlayLayer::onQuit() {
+    // Stop any pending delayed-start action so it doesn't fire after
+    // this PlayLayer is gone (e.g. on rapid retry).
+    this->stopAllActions();
+
     // Restore the original global music offset
     auto it = s_originalMusicOffsets.find(this);
     if (it != s_originalMusicOffsets.end()) {
