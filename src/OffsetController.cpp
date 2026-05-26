@@ -12,6 +12,12 @@ using namespace geode::prelude;
 // Stores the original FMODAudioEngine::m_musicOffset per PlayLayer instance
 static std::unordered_map<PlayLayer*, int> s_originalMusicOffset;
 
+// Stores the effective totalOffset for the current PlayLayer.
+// Set in prepareMusic, read by getAudioFileName and queueStartMusic hooks.
+// This is needed because prepareMusic modifies m_musicOffset to remainder,
+// so we can't rely on m_musicOffset to reconstruct totalOffset later.
+float s_currentTotalOffset = 0.f;
+
 // ─── Hook: PlayLayer::prepareMusic ───────────────────────────────────────────
 // This is called during PlayLayer::init, right before the audio file is
 // loaded.  At this point m_level is available and we can set the offset.
@@ -37,6 +43,9 @@ void MyPlayLayer::prepareMusic(bool dontWait) {
 
         LOG_DEBUG("prepareMusic: level={}, userOffset={}, originalOffset={}, totalOffset={}, fixEnabled={}",
                   m_level->m_levelID, userOffset, originalOffset, totalOffset, fixEnabled);
+
+        // Save totalOffset for use by getAudioFileName and queueStartMusic hooks
+        s_currentTotalOffset = totalOffset;
 
         if (totalOffset < 0 && fixEnabled) {
             int absTotal = static_cast<int>(std::abs(totalOffset));
@@ -96,4 +105,153 @@ void MyPlayLayer::onQuit() {
         s_originalMusicOffset.erase(it);
     }
     PlayLayer::onQuit();
+}
+
+// ─── Hook: FMODAudioEngine::queueStartMusic ─────────────────────────────────
+//
+// Song Triggers call queueStartMusic to play music during gameplay.
+// The `start` parameter (6th int) is the playback start time in ms.
+// The `musicID` parameter (10th int) identifies the song being played.
+//
+// This hook handles TWO concerns:
+//
+// 1. POSITIVE OFFSET (or negative without fix):
+//    Add the user's per-level offset to the `start` parameter so the
+//    offset applies to ALL song trigger music changes.
+//
+// 2. NEGATIVE OFFSET WITH FIX ENABLED:
+//    Redirect the audio path to a padded WAV file that has silence
+//    prepended. The offset is baked into the file, so we do NOT modify
+//    the `start` parameter. This logic was moved from
+//    PaddedQueueMusicFMODAudioEngine to avoid hook conflicts.
+//
+// Song key resolution uses musicID when available, falling back to
+// extractSongIdFromPath for cases where musicID is 0.
+
+void MyFMODAudioEngine::queueStartMusic(gd::string audioFilename, float pitch,
+                                         float unknown, float volume, bool loop,
+                                         int start, int end, int fadeIn,
+                                         int fadeOut, int musicID, bool p10,
+                                         int channelID, bool noPrepare,
+                                         bool dontReset) {
+    auto* pl = PlayLayer::get();
+    if (!pl || !pl->m_level) {
+        FMODAudioEngine::queueStartMusic(
+            audioFilename, pitch, unknown, volume, loop, start, end,
+            fadeIn, fadeOut, musicID, p10, channelID, noPrepare, dontReset
+        );
+        return;
+    }
+
+    float userOffset = OffsetStorage::getOffsetForLevel(pl->m_level);
+    float totalOffset = s_currentTotalOffset;
+    bool fixEnabled = Mod::get()->getSettingValue<bool>("negative-offset-fix");
+
+    // ── Case 1: Negative offset with fix enabled → redirect to padded WAV ──
+    if (totalOffset < 0 && fixEnabled) {
+        // If path is already a padded file, pass through directly
+        if (audioFilename.find("padded_") != gd::string::npos) {
+            FMODAudioEngine::queueStartMusic(
+                audioFilename, pitch, unknown, volume, loop, start, end,
+                fadeIn, fadeOut, musicID, p10, channelID, noPrepare, dontReset
+            );
+            return;
+        }
+
+        // Resolve song key: prefer musicID parameter, fall back to path parsing
+        int songKey = 0;
+        if (musicID > 0) {
+            songKey = musicID;
+        } else {
+            songKey = extractSongIdFromPath(std::string_view(audioFilename));
+        }
+        if (songKey <= 0) {
+            FMODAudioEngine::queueStartMusic(
+                audioFilename, pitch, unknown, volume, loop, start, end,
+                fadeIn, fadeOut, musicID, p10, channelID, noPrepare, dontReset
+            );
+            return;
+        }
+
+        // Verify this song key is relevant to the current level
+        int levelSongKey = getSongKey(pl->m_level);
+        bool relevant = (songKey == levelSongKey);
+        if (!relevant && !pl->m_level->m_songIDs.empty()) {
+            auto ids = pl->m_level->m_songIDs;
+            size_t p = 0;
+            while ((p = ids.find(',')) != gd::string::npos) {
+                auto idStr = ids.substr(0, p);
+                ids.erase(0, p + 1);
+                try { if (std::stoi(idStr) == songKey) { relevant = true; break; } }
+                catch (...) {}
+            }
+            if (!relevant && !ids.empty()) {
+                try { if (std::stoi(ids) == songKey) relevant = true; }
+                catch (...) {}
+            }
+        }
+        if (!relevant) {
+            FMODAudioEngine::queueStartMusic(
+                audioFilename, pitch, unknown, volume, loop, start, end,
+                fadeIn, fadeOut, musicID, p10, channelID, noPrepare, dontReset
+            );
+            return;
+        }
+
+        int absTotal = static_cast<int>(std::abs(totalOffset));
+        int intervalMs = ((absTotal + 999) / 1000) * 1000;
+        auto paddedPath = getCacheDir() / fmt::format("padded_{}_{}.wav", songKey, intervalMs);
+
+        // Ensure the padded file exists
+        std::error_code ec;
+        if (!std::filesystem::exists(paddedPath, ec)) {
+            // Check if there's already a padded file registered from prepareMusic
+            auto it = s_paddedPathBySongKey.find(songKey);
+            if (it != s_paddedPathBySongKey.end() && std::filesystem::exists(it->second, ec)) {
+                paddedPath = it->second;
+            } else {
+                // Locate the original source file via MusicDownloadManager
+                auto* fileUtils = CCFileUtils::sharedFileUtils();
+                std::string fullPath = fileUtils->fullPathForFilename(audioFilename.c_str(), false);
+                if (!fullPath.empty()) {
+                    std::filesystem::path actualSourcePath(fullPath);
+                    if (std::filesystem::exists(actualSourcePath)) {
+                        if (createPaddedWavFile(actualSourcePath, paddedPath, intervalMs)) {
+                            enforceCacheSizeLimit();
+                            s_paddedPathBySongKey[songKey] = paddedPath;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (std::filesystem::exists(paddedPath, ec)) {
+            LOG_DEBUG("queueStartMusic: negative offset, redirect {} -> {}", audioFilename, paddedPath.string());
+            FMODAudioEngine::queueStartMusic(
+                gd::string(paddedPath.string()), pitch, unknown, volume, loop,
+                start, end, fadeIn, fadeOut, musicID, p10, channelID,
+                noPrepare, dontReset
+            );
+        } else {
+            FMODAudioEngine::queueStartMusic(
+                audioFilename, pitch, unknown, volume, loop, start, end,
+                fadeIn, fadeOut, musicID, p10, channelID, noPrepare, dontReset
+            );
+        }
+        return;
+    }
+
+    // ── Case 2: Positive offset (or negative without fix) → adjust start ──
+    if (totalOffset != 0.f) {
+        int adjustedStart = start + static_cast<int>(totalOffset);
+        if (adjustedStart < 0) adjustedStart = 0;
+        LOG_DEBUG("queueStartMusic: applying offset {} to start ({} -> {}), musicID={}",
+                  static_cast<int>(totalOffset), start, adjustedStart, musicID);
+        start = adjustedStart;
+    }
+
+    FMODAudioEngine::queueStartMusic(
+        audioFilename, pitch, unknown, volume, loop, start, end,
+        fadeIn, fadeOut, musicID, p10, channelID, noPrepare, dontReset
+    );
 }

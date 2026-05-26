@@ -2,7 +2,6 @@
 #include "OffsetStorage.hpp"
 
 #include <Geode/modify/GJGameLevel.hpp>
-#include <Geode/modify/FMODAudioEngine.hpp>
 
 #include <fmod.hpp>
 #include <cmath>
@@ -37,7 +36,7 @@ static_assert(sizeof(WavHeader) == 44, "WavHeader must be exactly 44 bytes");
  *
  * @return true on success
  */
-static bool createPaddedWavFile(
+bool createPaddedWavFile(
     const std::filesystem::path& sourcePath,
     const std::filesystem::path& destPath,
     int padMs
@@ -177,16 +176,16 @@ static bool createPaddedWavFile(
 // Using song key instead of level ID because a level can have multiple
 // songs (m_songIDs).  Each song needs its own padded file.
 
-static std::unordered_map<int, std::filesystem::path> s_paddedPathBySongKey;
+std::unordered_map<int, std::filesystem::path> s_paddedPathBySongKey;
 
 /// Get the song key for a GJGameLevel's current song.
-static int getSongKey(GJGameLevel* level) {
+int getSongKey(GJGameLevel* level) {
     return (level->m_songID != 0) ? level->m_songID : (-level->m_audioTrack - 1);
 }
 
 /// Try to extract a numeric song ID from a path like "123456.mp3" or
 /// "/full/path/123456.ogg". Returns -1 if no numeric ID found.
-static int extractSongIdFromPath(std::string_view path) {
+int extractSongIdFromPath(std::string_view path) {
     // Get the stem (filename without extension)
     auto pos = path.rfind('/');
     if (pos == std::string_view::npos) pos = path.rfind('\\');
@@ -206,7 +205,7 @@ static int extractSongIdFromPath(std::string_view path) {
 }
 
 /// Resolve the cache directory from settings or fall back to the mod save dir.
-static std::filesystem::path getCacheDir() {
+std::filesystem::path getCacheDir() {
     auto customPath = Mod::get()->getSettingValue<std::string>("padded-cache-path");
     if (!customPath.empty()) {
         std::filesystem::path p(customPath);
@@ -221,7 +220,7 @@ static std::filesystem::path getCacheDir() {
 /// Enforce the max cache size: delete oldest padded files when exceeded.
 /// Only counts files matching the "padded_*.wav" pattern.
 /// Files currently registered in s_paddedPathBySongKey are excluded from deletion.
-static void enforceCacheSizeLimit() {
+void enforceCacheSizeLimit() {
     int maxSizeMB = Mod::get()->getSettingValue<int>("padded-cache-max-size");
     if (maxSizeMB <= 0) return; // unlimited
 
@@ -325,16 +324,16 @@ class $modify(NegativeOffsetGJGameLevel, GJGameLevel) {
         }
 
         // Check if this level has a negative offset that needs the workaround
-        float userOffset = OffsetStorage::getOffsetForLevel(this);
-        int totalOffset = FMODAudioEngine::sharedEngine()->m_musicOffset
-                          + static_cast<int>(userOffset);
-
+        // s_currentTotalOffset is set by MyPlayLayer::prepareMusic before
+        // PlayLayer::prepareMusic calls getAudioFileName internally.
+        extern float s_currentTotalOffset;
+        float totalOffset = s_currentTotalOffset;
         bool fixEnabled = Mod::get()->getSettingValue<bool>("negative-offset-fix");
         if (totalOffset >= 0 || !fixEnabled) {
             return GJGameLevel::getAudioFileName();
         }
 
-        int absTotal   = std::abs(totalOffset);
+        int absTotal   = static_cast<int>(std::abs(totalOffset));
         int intervalMs = ((absTotal + 999) / 1000) * 1000;
 
         // Locate the original audio file
@@ -371,131 +370,6 @@ class $modify(NegativeOffsetGJGameLevel, GJGameLevel) {
         );
 
         return gd::string(paddedPath.string());
-    }
-};
-
-// ─── Hook: FMODAudioEngine::queueStartMusic ──────────────────────────────────
-// Song Triggers call this method directly, bypassing getAudioFileName.
-// We intercept it to redirect the audio path to the padded version when a
-// negative offset workaround is active.
-//
-// This follows the same pattern used by jukebox for NONG song replacement.
-
-class $modify(PaddedQueueMusicFMODAudioEngine, FMODAudioEngine) {
-    void queueStartMusic(gd::string audioFilename, float pitch, float unknown,
-                         float volume, bool loop, int start, int end,
-                         int fadeIn, int fadeOut, int musicID, bool p10,
-                         int channelID, bool noPrepare, bool dontReset) {
-        // If the path is already a padded file, pass through
-        if (audioFilename.find("padded_") != gd::string::npos) {
-            FMODAudioEngine::queueStartMusic(
-                audioFilename, pitch, unknown, volume, loop, start, end,
-                fadeIn, fadeOut, musicID, p10, channelID, noPrepare, dontReset
-            );
-            return;
-        }
-
-        // Check if this path should be redirected
-        auto* pl = PlayLayer::get();
-        if (!pl || !pl->m_level) {
-            FMODAudioEngine::queueStartMusic(
-                audioFilename, pitch, unknown, volume, loop, start, end,
-                fadeIn, fadeOut, musicID, p10, channelID, noPrepare, dontReset
-            );
-            return;
-        }
-
-        bool fixEnabled = Mod::get()->getSettingValue<bool>("negative-offset-fix");
-        if (!fixEnabled) {
-            FMODAudioEngine::queueStartMusic(
-                audioFilename, pitch, unknown, volume, loop, start, end,
-                fadeIn, fadeOut, musicID, p10, channelID, noPrepare, dontReset
-            );
-            return;
-        }
-
-        float userOffset = OffsetStorage::getOffsetForLevel(pl->m_level);
-        int totalOffset = FMODAudioEngine::sharedEngine()->m_musicOffset
-                          + static_cast<int>(userOffset);
-        if (totalOffset >= 0) {
-            FMODAudioEngine::queueStartMusic(
-                audioFilename, pitch, unknown, volume, loop, start, end,
-                fadeIn, fadeOut, musicID, p10, channelID, noPrepare, dontReset
-            );
-            return;
-        }
-
-        // Extract song ID from the audio filename
-        int songIdFromPath = extractSongIdFromPath(std::string_view(audioFilename));
-        if (songIdFromPath < 0) {
-            FMODAudioEngine::queueStartMusic(
-                audioFilename, pitch, unknown, volume, loop, start, end,
-                fadeIn, fadeOut, musicID, p10, channelID, noPrepare, dontReset
-            );
-            return;
-        }
-
-        int songKey = songIdFromPath;
-
-        // Verify this song key is relevant to the current level
-        int levelSongKey = getSongKey(pl->m_level);
-        bool relevant = (songKey == levelSongKey);
-        if (!relevant && !pl->m_level->m_songIDs.empty()) {
-            auto ids = pl->m_level->m_songIDs;
-            size_t p = 0;
-            while ((p = ids.find(',')) != gd::string::npos) {
-                auto idStr = ids.substr(0, p);
-                ids.erase(0, p + 1);
-                try { if (std::stoi(idStr) == songKey) { relevant = true; break; } }
-                catch (...) {}
-            }
-            if (!relevant && !ids.empty()) {
-                try { if (std::stoi(ids) == songKey) relevant = true; }
-                catch (...) {}
-            }
-        }
-        if (!relevant) {
-            FMODAudioEngine::queueStartMusic(
-                audioFilename, pitch, unknown, volume, loop, start, end,
-                fadeIn, fadeOut, musicID, p10, channelID, noPrepare, dontReset
-            );
-            return;
-        }
-
-        int absTotal = std::abs(totalOffset);
-        int intervalMs = ((absTotal + 999) / 1000) * 1000;
-        auto paddedPath = getCacheDir() / fmt::format("padded_{}_{}.wav", songKey, intervalMs);
-
-        // Ensure the padded file exists
-        std::error_code ec;
-        if (!std::filesystem::exists(paddedPath, ec)) {
-            // Locate the original source file
-            auto* fileUtils = CCFileUtils::sharedFileUtils();
-            std::string fullPath = fileUtils->fullPathForFilename(audioFilename.c_str(), false);
-            if (!fullPath.empty()) {
-                std::filesystem::path actualSourcePath(fullPath);
-                if (std::filesystem::exists(actualSourcePath)) {
-                    if (createPaddedWavFile(actualSourcePath, paddedPath, intervalMs)) {
-                        enforceCacheSizeLimit();
-                        s_paddedPathBySongKey[songKey] = paddedPath;
-                    }
-                }
-            }
-        }
-
-        if (std::filesystem::exists(paddedPath, ec)) {
-            log::info("Song trigger redirected: {} -> {}", audioFilename, paddedPath.string());
-            FMODAudioEngine::queueStartMusic(
-                gd::string(paddedPath.string()), pitch, unknown, volume, loop,
-                start, end, fadeIn, fadeOut, musicID, p10, channelID,
-                noPrepare, dontReset
-            );
-        } else {
-            FMODAudioEngine::queueStartMusic(
-                audioFilename, pitch, unknown, volume, loop, start, end,
-                fadeIn, fadeOut, musicID, p10, channelID, noPrepare, dontReset
-            );
-        }
     }
 };
 
