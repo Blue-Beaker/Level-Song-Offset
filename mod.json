@@ -25,6 +25,11 @@
 			"default": false
 		}
 	},
+	"resources": {
+		"sprites": [
+			"resources/offset-icon.png"
+		]
+	},
 	"dependencies": {
 		"geode.node-ids": ">=v1.23.3"
 	}

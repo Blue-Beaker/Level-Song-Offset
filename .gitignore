@@ -83,3 +83,6 @@ build.ninja
 # CLion
 .idea/
 /cmake-build-*/
+
+# Krita/kate cache
+*.*~
