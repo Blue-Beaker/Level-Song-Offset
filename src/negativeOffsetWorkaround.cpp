@@ -146,6 +146,85 @@ static int getSongKey(GJGameLevel* level) {
     return (level->m_songID != 0) ? level->m_songID : (-level->m_audioTrack - 1);
 }
 
+/// Resolve the cache directory from settings or fall back to the mod save dir.
+static std::filesystem::path getCacheDir() {
+    auto customPath = Mod::get()->getSettingValue<std::string>("padded-cache-path");
+    if (!customPath.empty()) {
+        std::filesystem::path p(customPath);
+        std::error_code ec;
+        std::filesystem::create_directories(p, ec);
+        if (!ec) return p;
+        log::warn("Custom cache path invalid, falling back to save dir: {}", ec.message());
+    }
+    return Mod::get()->getSaveDir();
+}
+
+/// Enforce the max cache size: delete oldest padded files when exceeded.
+/// Only counts files matching the "padded_*.wav" pattern.
+/// Files currently registered in s_paddedPathBySongKey are excluded from deletion.
+static void enforceCacheSizeLimit() {
+    int maxSizeMB = Mod::get()->getSettingValue<int>("padded-cache-max-size");
+    if (maxSizeMB <= 0) return; // unlimited
+
+    auto cacheDir = getCacheDir();
+    std::error_code ec;
+
+    // Build a set of in-use paths so we never delete the current level's cache
+    std::unordered_set<std::filesystem::path> inUse;
+    for (auto& [_, p] : s_paddedPathBySongKey) {
+        inUse.insert(p.lexically_normal());
+    }
+
+    // Collect all padded WAV files with their last-write times
+    struct FileEntry {
+        std::filesystem::path path;
+        std::filesystem::file_time_type time;
+        uintmax_t size;
+    };
+    std::vector<FileEntry> files;
+
+    uintmax_t totalSize = 0;
+    for (auto& entry : std::filesystem::directory_iterator(cacheDir, ec)) {
+        if (!entry.is_regular_file(ec)) continue;
+        auto& p = entry.path();
+        auto name = p.filename().string();
+        if (name.find("padded_") != 0 || p.extension() != ".wav") continue;
+
+        // Skip files that are currently in use
+        if (inUse.count(p.lexically_normal())) continue;
+
+        auto ft = entry.last_write_time(ec);
+        auto fs = entry.file_size(ec);
+        files.push_back({entry.path(), ft, fs});
+        totalSize += fs;
+    }
+
+    uintmax_t maxSizeBytes = static_cast<uintmax_t>(maxSizeMB) * 1024ULL * 1024ULL;
+    if (totalSize <= maxSizeBytes) return;
+
+    // Sort oldest-first
+    std::sort(files.begin(), files.end(),
+        [](const FileEntry& a, const FileEntry& b) { return a.time < b.time; });
+
+    // Delete oldest files until under limit
+    uintmax_t target = totalSize - maxSizeBytes;
+    uintmax_t freed = 0;
+    int deleted = 0;
+    for (auto& f : files) {
+        std::filesystem::remove(f.path, ec);
+        if (!ec) {
+            freed += f.size;
+            deleted++;
+            log::info("Deleted old padded cache: {} ({} MB)", f.path.filename().string(), f.size / (1024 * 1024));
+        }
+        if (freed >= target) break;
+    }
+
+    if (deleted > 0) {
+        log::info("Cache cleanup: freed {} MB, deleted {} file(s)", freed / (1024 * 1024), deleted);
+    }
+}
+
 /// Ensure a padded WAV exists for the given song key and offset.
 void ensurePaddedFile(int songKey, int totalOffset) {
     if (totalOffset >= 0) return;
@@ -156,20 +235,17 @@ void ensurePaddedFile(int songKey, int totalOffset) {
     int absTotal   = std::abs(totalOffset);
     int intervalMs = ((absTotal + 999) / 1000) * 1000;
 
-    auto saveDir = Mod::get()->getSaveDir();
+    auto paddedPath = getCacheDir() / fmt::format("padded_{}_{}.wav", songKey, intervalMs);
+
     std::error_code ec;
-    std::filesystem::create_directories(saveDir, ec);
-
-    auto paddedPath = saveDir / fmt::format("padded_{}_{}.wav", songKey, intervalMs);
-
     if (std::filesystem::exists(paddedPath, ec)) {
         s_paddedPathBySongKey[songKey] = paddedPath;
         return;
     }
 
-    // File will be created lazily in getAudioFileName when we have
-    // access to the original source path.
-    s_paddedPathBySongKey[songKey] = paddedPath;
+    // File doesn't exist yet — do NOT register a stale path.
+    // Actual creation happens in getAudioFileName hook where we have
+    // access to the original source file path.
 }
 
 // ─── Hook: GJGameLevel::getAudioFileName ─────────────────────────────────────
@@ -213,17 +289,18 @@ class $modify(NegativeOffsetGJGameLevel, GJGameLevel) {
         std::filesystem::path actualSourcePath(fullPath);
         if (!std::filesystem::exists(actualSourcePath)) return original;
 
-        // Create the padded WAV file
-        auto saveDir = Mod::get()->getSaveDir();
+        // Create the padded WAV file in the configured cache directory
+        auto cacheDir = getCacheDir();
         std::error_code ec;
-        std::filesystem::create_directories(saveDir, ec);
 
-        auto paddedPath = saveDir / fmt::format("padded_{}_{}.wav", songKey, intervalMs);
+        auto paddedPath = cacheDir / fmt::format("padded_{}_{}.wav", songKey, intervalMs);
 
         if (!std::filesystem::exists(paddedPath, ec)) {
             if (!createPaddedWavFile(actualSourcePath, paddedPath, intervalMs)) {
                 return original;
             }
+            // Enforce cache size limit after creating a new file
+            enforceCacheSizeLimit();
         }
 
         // Register and return
@@ -247,6 +324,18 @@ void NegativeOffsetPlayLayer::onQuit() {
         s_paddedPathBySongKey.erase(mainSongKey);
         // Also clear any other song keys that might have been registered
         // (multi-song levels store additional IDs in m_songIDs)
+        if (!m_level->m_songIDs.empty()) {
+            auto ids = m_level->m_songIDs;
+            size_t pos = 0;
+            while ((pos = ids.find(',')) != gd::string::npos) {
+                auto idStr = ids.substr(0, pos);
+                ids.erase(0, pos + 1);
+                try { s_paddedPathBySongKey.erase(std::stoi(idStr)); } catch (...) {}
+            }
+            if (!ids.empty()) {
+                try { s_paddedPathBySongKey.erase(std::stoi(ids)); } catch (...) {}
+            }
+        }
     }
 
     PlayLayer::onQuit();
