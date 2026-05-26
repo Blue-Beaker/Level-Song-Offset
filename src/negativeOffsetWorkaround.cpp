@@ -284,6 +284,9 @@ void enforceCacheSizeLimit() {
 }
 
 /// Ensure a padded WAV exists for the given song key and offset.
+/// Creates the padded file eagerly if it doesn't exist yet, using
+/// MusicDownloadManager to locate the original source file.
+/// This avoids runtime lag when Song Triggers fire during gameplay.
 void ensurePaddedFile(int songKey, int totalOffset) {
     if (totalOffset >= 0) return;
 
@@ -301,9 +304,22 @@ void ensurePaddedFile(int songKey, int totalOffset) {
         return;
     }
 
-    // File doesn't exist yet — do NOT register a stale path.
-    // Actual creation happens in getAudioFileName hook where we have
-    // access to the original source file path.
+    // File doesn't exist — create it now using MusicDownloadManager to
+    // locate the original source file.
+    auto* mdm = MusicDownloadManager::sharedState();
+    if (!mdm) return;
+
+    auto originalPath = mdm->pathForSong(songKey);
+    if (originalPath.empty()) return;
+
+    std::filesystem::path actualSourcePath(originalPath);
+    if (!std::filesystem::exists(actualSourcePath)) return;
+
+    if (createPaddedWavFile(actualSourcePath, paddedPath, intervalMs)) {
+        enforceCacheSizeLimit();
+        s_paddedPathBySongKey[songKey] = paddedPath;
+        log::info("Eagerly created padded file for song key {}: {}", songKey, paddedPath.string());
+    }
 }
 
 // ─── Hook: GJGameLevel::getAudioFileName ─────────────────────────────────────
