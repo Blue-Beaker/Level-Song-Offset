@@ -9,20 +9,18 @@ using namespace geode::prelude;
 /**
  * Manages per-level song offset.
  *
- * Offset is applied in PlayLayer::prepareMusic (the last chance before
- * GD reads GameManager::m_timeOffset to start music playback).
- * Positive offset skips that many ms; negative offset with fix enabled
- * redirects to a padded WAV file.
+ * Instead of modifying the global m_musicOffset (which only affects initial
+ * music), we hook FMODAudioEngine methods directly — like jukebox does —
+ * to apply the offset to the start time parameter. This ensures offset
+ * works for ALL music playback: initial music, song triggers, and seek.
  *
- * For song triggers, FMODAudioEngine::queueStartMusic is hooked to apply
- * the user's offset to the start time parameter, ensuring offset works
- * for ALL music changes during gameplay, not just the initial song.
+ * For negative offset with fix enabled, GJGameLevel::getAudioFileName
+ * returns a padded WAV file (offset baked in), and queueStartMusic
+ * redirects song triggers to the same padded file.
  */
 class $modify(MyPlayLayer, PlayLayer) {
     bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects);
     void prepareMusic(bool dontWait);
-    void startMusic();
-    void onQuit();
 };
 
 class $modify(MyFMODAudioEngine, FMODAudioEngine) {
@@ -30,4 +28,5 @@ class $modify(MyFMODAudioEngine, FMODAudioEngine) {
                          float volume, bool loop, int start, int end,
                          int fadeIn, int fadeOut, int musicID, bool p10,
                          int channelID, bool noPrepare, bool dontReset);
+    void setMusicTimeMS(unsigned int ms, bool p1, int channel);
 };

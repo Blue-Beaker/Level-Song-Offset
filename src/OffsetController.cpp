@@ -9,31 +9,26 @@ using namespace geode::prelude;
     do { if (Mod::get()->getSettingValue<bool>("debug-logging")) \
         log::info(__VA_ARGS__); } while(0)
 
-// Stores the original FMODAudioEngine::m_musicOffset per PlayLayer instance
-static std::unordered_map<PlayLayer*, int> s_originalMusicOffset;
-
 // Stores the effective totalOffset for the current PlayLayer.
-// Set in prepareMusic, read by getAudioFileName and queueStartMusic hooks.
-// This is needed because prepareMusic modifies m_musicOffset to remainder,
-// so we can't rely on m_musicOffset to reconstruct totalOffset later.
+// Set in prepareMusic, read by getAudioFileName, queueStartMusic,
+// and setMusicTimeMS hooks.
+// totalOffset = original GameManager::m_timeOffset + user offset.
 float s_currentTotalOffset = 0.f;
 
-// ─── Hook: PlayLayer::prepareMusic ───────────────────────────────────────────
-// This is called during PlayLayer::init, right before the audio file is
-// loaded.  At this point m_level is available and we can set the offset.
-// This is the LAST chance to set the offset before GD reads it.
+// ─── Hook: PlayLayer ────────────────────────────────────────────────────────
+// We don't modify m_musicOffset anymore. Instead, queueStartMusic and
+// setMusicTimeMS hooks apply the offset to the start time parameter,
+// following the same pattern as jukebox.
 
 bool MyPlayLayer::init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
     if (!PlayLayer::init(level, useReplay, dontCreateObjects))
         return false;
 
-    s_originalMusicOffset[this] = FMODAudioEngine::sharedEngine()->m_musicOffset;
-
     // Pre-register all song keys for this level in s_paddedPathBySongKey,
     // so cache cleanup won't delete files we're about to use.
     if (m_level && Mod::get()->getSettingValue<bool>("negative-offset-fix")) {
         float userOffset = OffsetStorage::getOffsetForLevel(m_level);
-        float originalOffset = static_cast<float>(s_originalMusicOffset[this]);
+        float originalOffset = static_cast<float>(FMODAudioEngine::sharedEngine()->m_musicOffset);
         float totalOffset = originalOffset + userOffset;
         if (totalOffset < 0) {
             int songKey = (m_level->m_songID != 0) ? m_level->m_songID
@@ -71,7 +66,7 @@ void MyPlayLayer::prepareMusic(bool dontWait) {
               FMODAudioEngine::sharedEngine()->m_musicOffset);
     if (m_level) {
         float userOffset = OffsetStorage::getOffsetForLevel(m_level);
-        float originalOffset = static_cast<float>(s_originalMusicOffset[this]);
+        float originalOffset = static_cast<float>(FMODAudioEngine::sharedEngine()->m_musicOffset);
         float totalOffset = originalOffset + userOffset;
 
         bool fixEnabled = Mod::get()->getSettingValue<bool>("negative-offset-fix");
@@ -79,12 +74,11 @@ void MyPlayLayer::prepareMusic(bool dontWait) {
         LOG_DEBUG("prepareMusic: level={}, userOffset={}, originalOffset={}, totalOffset={}, fixEnabled={}",
                   m_level->m_levelID, userOffset, originalOffset, totalOffset, fixEnabled);
 
-        // Save totalOffset for use by getAudioFileName and queueStartMusic hooks
+        // Save totalOffset for use by getAudioFileName, queueStartMusic,
+        // and setMusicTimeMS hooks.
         s_currentTotalOffset = totalOffset;
 
         if (totalOffset < 0 && fixEnabled) {
-            int absTotal = static_cast<int>(std::abs(totalOffset));
-
             int songKey = (m_level->m_songID != 0) ? m_level->m_songID
                                                    : (-m_level->m_audioTrack - 1);
             ensurePaddedFile(songKey, static_cast<int>(totalOffset));
@@ -102,49 +96,14 @@ void MyPlayLayer::prepareMusic(bool dontWait) {
                     ensurePaddedFile(std::stoi(ids), static_cast<int>(totalOffset));
                 }
             }
-
-            // Run cache cleanup once per PlayLayer. Before that, ensure all
-            // song keys used by this level are registered in s_paddedPathBySongKey
-            // (with whatever path they already have or will have), so the cleanup
-            // doesn't delete files this level is about to use.
-            int intervalMs = ((absTotal + 999) / 1000) * 1000;
-
-            int remainder  = intervalMs - absTotal;
-            // Set m_musicOffset directly — this is what PlayLayer::startMusic
-            // reads.  Leave GameManager::m_timeOffset untouched so the
-            // game setting isn't affected.
-            FMODAudioEngine::sharedEngine()->m_musicOffset = remainder;
-            LOG_DEBUG("prepareMusic: negative offset fix, intervalMs={}, remainder={}, m_musicOffset={}",
-                      intervalMs, remainder,
-                      FMODAudioEngine::sharedEngine()->m_musicOffset);
-        } else {
-            FMODAudioEngine::sharedEngine()->m_musicOffset = static_cast<int>(totalOffset);
-            LOG_DEBUG("prepareMusic: set m_musicOffset={}", static_cast<int>(totalOffset));
         }
     }
 
+    // Don't modify m_musicOffset — queueStartMusic/setMusicTimeMS hooks
+    // will apply the offset to the start time parameter instead.
     PlayLayer::prepareMusic(dontWait);
     LOG_DEBUG("AFTER prepareMusic: m_musicOffset={}",
               FMODAudioEngine::sharedEngine()->m_musicOffset);
-}
-
-void MyPlayLayer::startMusic() {
-    LOG_DEBUG("BEFORE startMusic: m_musicOffset={}",
-              FMODAudioEngine::sharedEngine()->m_musicOffset);
-
-    PlayLayer::startMusic();
-
-    LOG_DEBUG("AFTER startMusic: m_musicOffset={}",
-              FMODAudioEngine::sharedEngine()->m_musicOffset);
-}
-
-void MyPlayLayer::onQuit() {
-    auto it = s_originalMusicOffset.find(this);
-    if (it != s_originalMusicOffset.end()) {
-        FMODAudioEngine::sharedEngine()->m_musicOffset = it->second;
-        s_originalMusicOffset.erase(it);
-    }
-    PlayLayer::onQuit();
 }
 
 // ─── Hook: FMODAudioEngine::queueStartMusic ─────────────────────────────────
@@ -156,14 +115,12 @@ void MyPlayLayer::onQuit() {
 // This hook handles TWO concerns:
 //
 // 1. POSITIVE OFFSET (or negative without fix):
-//    Add the user's per-level offset to the `start` parameter so the
-//    offset applies to ALL song trigger music changes.
+//    Add the per-level offset to the `start` parameter.
 //
 // 2. NEGATIVE OFFSET WITH FIX ENABLED:
 //    Redirect the audio path to a padded WAV file that has silence
 //    prepended. The offset is baked into the file, so we do NOT modify
-//    the `start` parameter. This logic was moved from
-//    PaddedQueueMusicFMODAudioEngine to avoid hook conflicts.
+//    the `start` parameter.
 //
 // Song key resolution uses musicID when available, falling back to
 // extractSongIdFromPath for cases where musicID is 0.
@@ -183,7 +140,6 @@ void MyFMODAudioEngine::queueStartMusic(gd::string audioFilename, float pitch,
         return;
     }
 
-    float userOffset = OffsetStorage::getOffsetForLevel(pl->m_level);
     float totalOffset = s_currentTotalOffset;
     bool fixEnabled = Mod::get()->getSettingValue<bool>("negative-offset-fix");
 
@@ -243,12 +199,10 @@ void MyFMODAudioEngine::queueStartMusic(gd::string audioFilename, float pitch,
         // Ensure the padded file exists
         std::error_code ec;
         if (!std::filesystem::exists(paddedPath, ec)) {
-            // Check if there's already a padded file registered from prepareMusic
             auto it = s_paddedPathBySongKey.find(songKey);
             if (it != s_paddedPathBySongKey.end() && std::filesystem::exists(it->second, ec)) {
                 paddedPath = it->second;
             } else {
-                // Locate the original source file via MusicDownloadManager
                 auto* fileUtils = CCFileUtils::sharedFileUtils();
                 std::string fullPath = fileUtils->fullPathForFilename(audioFilename.c_str(), false);
                 if (!fullPath.empty()) {
@@ -264,10 +218,17 @@ void MyFMODAudioEngine::queueStartMusic(gd::string audioFilename, float pitch,
         }
 
         if (std::filesystem::exists(paddedPath, ec)) {
-            LOG_DEBUG("queueStartMusic: negative offset, redirect {} -> {}", audioFilename, paddedPath.string());
+            // Padded file has intervalMs of silence. We need to skip
+            // `remainder` ms so the effective offset equals totalOffset.
+            //   remainder = intervalMs - abs(totalOffset)
+            int intervalMs = ((static_cast<int>(std::abs(totalOffset)) + 999) / 1000) * 1000;
+            int remainder = intervalMs - static_cast<int>(std::abs(totalOffset));
+            int adjustedStart = start + remainder;
+            LOG_DEBUG("queueStartMusic: negative offset, redirect {} -> {}, start {} -> {} (remainder={})",
+                      audioFilename, paddedPath.string(), start, adjustedStart, remainder);
             FMODAudioEngine::queueStartMusic(
                 gd::string(paddedPath.string()), pitch, unknown, volume, loop,
-                start, end, fadeIn, fadeOut, musicID, p10, channelID,
+                adjustedStart, end, fadeIn, fadeOut, musicID, p10, channelID,
                 noPrepare, dontReset
             );
         } else {
@@ -292,4 +253,39 @@ void MyFMODAudioEngine::queueStartMusic(gd::string audioFilename, float pitch,
         audioFilename, pitch, unknown, volume, loop, start, end,
         fadeIn, fadeOut, musicID, p10, channelID, noPrepare, dontReset
     );
+}
+
+// ─── Hook: FMODAudioEngine::setMusicTimeMS ──────────────────────────────────
+// Handles seek operations during gameplay (e.g. practice mode, song trigger
+// repositioning). Follows the same pattern as jukebox.
+
+void MyFMODAudioEngine::setMusicTimeMS(unsigned int ms, bool p1, int channel) {
+    float totalOffset = s_currentTotalOffset;
+    bool fixEnabled = Mod::get()->getSettingValue<bool>("negative-offset-fix");
+
+    // For negative offset with fix enabled, the padded file has intervalMs
+    // of silence prepended. We need to add `remainder` to the seek position
+    // so the effective offset equals totalOffset.
+    //   intervalMs = ceil(abs(totalOffset)/1000)*1000
+    //   remainder = intervalMs - abs(totalOffset)
+    if (totalOffset < 0 && fixEnabled) {
+        int intervalMs = ((static_cast<int>(std::abs(totalOffset)) + 999) / 1000) * 1000;
+        int remainder = intervalMs - static_cast<int>(std::abs(totalOffset));
+        int adjustedMs = static_cast<int>(ms) + remainder;
+        LOG_DEBUG("setMusicTimeMS: negative offset fix, seek {} -> {} (remainder={})",
+                  ms, adjustedMs, remainder);
+        FMODAudioEngine::setMusicTimeMS(static_cast<unsigned int>(adjustedMs), p1, channel);
+        return;
+    }
+
+    if (totalOffset != 0.f) {
+        int adjustedMs = static_cast<int>(ms) + static_cast<int>(totalOffset);
+        if (adjustedMs < 0) adjustedMs = 0;
+        LOG_DEBUG("setMusicTimeMS: applying offset {} ({} -> {})",
+                  static_cast<int>(totalOffset), ms, adjustedMs);
+        FMODAudioEngine::setMusicTimeMS(static_cast<unsigned int>(adjustedMs), p1, channel);
+        return;
+    }
+
+    FMODAudioEngine::setMusicTimeMS(ms, p1, channel);
 }
