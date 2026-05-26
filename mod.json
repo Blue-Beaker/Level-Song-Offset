@@ -22,8 +22,7 @@
 			"name": "Padded Cache Path",
 			"description": "Custom directory for storing padded audio cache files. Leave empty to use the mod's save directory",
 			"type": "string",
-			"default": "",
-			"placeholder": "e.g. C:/Cache/LevelSongOffset"
+			"default": ""
 		},
 		"padded-cache-max-size": {
 			"name": "Max Cache Size (MB)",
