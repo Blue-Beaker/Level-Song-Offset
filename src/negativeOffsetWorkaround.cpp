@@ -28,6 +28,50 @@ struct WavHeader {
 };
 static_assert(sizeof(WavHeader) == 44, "WavHeader must be exactly 44 bytes");
 
+/// Inject periodic 1 kHz beeps into the padded audio buffer for debugging.
+/// Beeps are 100 ms long, repeated every 500 ms, written across the full audio.
+/// Only works for 16-bit PCM audio. No-op if the "debug-beep-in-padding" setting
+/// is disabled or bitsPerSample != 16.
+static void injectDebugBeeps(
+    std::vector<uint8_t>& audioData,
+    unsigned int sampleRate,
+    unsigned int blockAlign,
+    int numChannels,
+    int bitsPerSample
+) {
+    bool debugBeep = Mod::get()->getSettingValue<bool>("debug-beep-in-padding");
+    if (!debugBeep || bitsPerSample != 16) return;
+
+    unsigned int beepSamples  = (sampleRate * 100) / 1000;  // 100 ms
+    unsigned int beepInterval = (sampleRate * 500) / 1000;  // 500 ms
+
+    // Precompute a single beep waveform (16-bit, 1 kHz sine)
+    std::vector<int16_t> beepMono(beepSamples);
+    for (unsigned int i = 0; i < beepSamples; i++) {
+        double t = static_cast<double>(i) / sampleRate;
+        beepMono[i] = static_cast<int16_t>(std::sin(2.0 * M_PI * 1000.0 * t) * 13000.0);
+    }
+
+    // Write beeps across the full audio buffer
+    unsigned int totalSamples = static_cast<unsigned int>(audioData.size()) / blockAlign;
+    for (unsigned int sampleOffset = 0;
+         sampleOffset + beepSamples <= totalSamples;
+         sampleOffset += beepInterval)
+    {
+        for (unsigned int s = 0; s < beepSamples; s++) {
+            unsigned int bytePos = (sampleOffset + s) * blockAlign;
+            if (bytePos + blockAlign > audioData.size()) break;
+            for (int ch = 0; ch < numChannels; ch++) {
+                int16_t sample = beepMono[s];
+                std::memcpy(audioData.data() + bytePos + ch * 2, &sample, 2);
+            }
+        }
+    }
+
+    log::info("Debug beep: injected {}ms beeps every {}ms across full audio ({} total ms)",
+              100, 500, totalSamples / sampleRate * 1000);
+}
+
 /**
  * Decode the source audio file to PCM, prepend |padMs| ms of silence,
  * and write the result as a standard WAV file.
@@ -107,40 +151,7 @@ bool createPaddedWavFile(
     srcSound->release();
 
     // Optionally inject periodic beeps across the ENTIRE audio for debugging.
-    // This lets us verify whether the padded file is actually being played
-    // (beeps audible) or not (no beeps), even after the silence padding ends.
-    bool debugBeep = Mod::get()->getSettingValue<bool>("debug-beep-in-padding");
-    if (debugBeep && bitsPerSample == 16) {
-        // Beep: 100 ms of 1 kHz sine wave, repeated every 500 ms
-        unsigned int beepSamples   = (sampleRate * 100) / 1000;
-        unsigned int beepInterval  = (sampleRate * 500) / 1000;
-        unsigned int intervalBytes = beepInterval * blockAlign;
-
-        // Precompute a single beep waveform (16-bit)
-        std::vector<int16_t> beepMono(beepSamples);
-        for (unsigned int i = 0; i < beepSamples; i++) {
-            double t = static_cast<double>(i) / sampleRate;
-            beepMono[i] = static_cast<int16_t>(std::sin(2.0 * M_PI * 1000.0 * t) * 13000.0);
-        }
-
-        // Write beeps across the full audio buffer
-        unsigned int totalSamples = totalDataSize / blockAlign;
-        for (unsigned int sampleOffset = 0;
-             sampleOffset + beepSamples <= totalSamples;
-             sampleOffset += beepInterval)
-        {
-            for (unsigned int s = 0; s < beepSamples; s++) {
-                unsigned int bytePos = (sampleOffset + s) * blockAlign;
-                if (bytePos + blockAlign > totalDataSize) break;
-                for (int ch = 0; ch < numChannels; ch++) {
-                    int16_t sample = beepMono[s];
-                    std::memcpy(paddedData.data() + bytePos + ch * 2, &sample, 2);
-                }
-            }
-        }
-        log::info("Debug beep: injected {}ms beeps every {}ms across full audio ({} total)",
-                  100, 500, totalDataSize / blockAlign / sampleRate * 1000);
-    }
+    injectDebugBeeps(paddedData, sampleRate, blockAlign, numChannels, bitsPerSample);
 
     // Write WAV header + data
     WavHeader header;

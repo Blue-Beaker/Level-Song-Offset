@@ -76,15 +76,15 @@ void OffsetPopup::onClearCache(CCObject*) {
 
     if(collection.totalFiles<=0){
         Notification::create(
-            "No files cached for negative audio offset",
+            "No negative offset audio cache found",
             NotificationIcon::Success
         )->show();
         return;
     }
 
     createQuickPopup(
-        "Clear Cache",
-        fmt::format("Are you sure you want to delete all cache? ({:.2f} MB)\n Original song files won't be deleted.\nCache will regenerate when audio offset is negative.",
+        "Clear Audio Cache",
+        fmt::format("Are you sure you want to delete all negative offset audio cache? ({:.2f} MB)\n Original song files won't be deleted.\nCache will regenerate when audio offset is negative.",
             static_cast<double>(collection.totalSize) / (1024.0 * 1024.0)),
         "Cancel", "Delete",
         [collection](auto, bool btn2) mutable {

@@ -19,14 +19,14 @@
 			"default": true
 		},
 		"padded-cache-path": {
-			"name": "Padded Cache Path",
-			"description": "Custom directory for storing padded audio cache files. Leave empty to use the mod's save directory",
+			"name": "Negative Offset Audio Cache",
+			"description": "Custom directory for storing padded audio cache files for the negative offset workaround. Leave empty to use the mod's save directory",
 			"type": "string",
 			"default": ""
 		},
 		"padded-cache-max-size": {
-			"name": "Max Cache Size (MB)",
-			"description": "Maximum disk space to use for padded audio cache. Oldest files are deleted when exceeded. 0 = unlimited",
+			"name": "Max Audio Cache Size (MB)",
+			"description": "Maximum disk space to use for the negative offset audio cache. Oldest files are deleted when exceeded. 0 = unlimited",
 			"type": "int",
 			"default": 500,
 			"min": 0,
