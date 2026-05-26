@@ -14,7 +14,8 @@ using namespace geode::prelude;
  * On PlayLayer::startMusic:
  *   - Calculates total offset = original m_musicOffset + user offset
  *   - If total offset is negative and fix is enabled: starts music at
- *     position 0, pauses it, then resumes after |totalOffset| ms delay
+ *     position 0 with volume muted, then restores volume and seeks to
+ *     beginning after |totalOffset| ms delay
  *   - Otherwise: sets m_musicOffset = totalOffset before calling original
  */
 class $modify(MyPlayLayer, PlayLayer) {
@@ -22,5 +23,9 @@ class $modify(MyPlayLayer, PlayLayer) {
     void startMusic();
     void onQuit();
 
-    void applyDelayedMusic();
+    void applyDelayedMusic(float dt);
+
+    struct Fields {
+        float m_savedBgVolume = 1.f;
+    };
 };
