@@ -1,9 +1,9 @@
 #include <Geode/modify/EditLevelLayer.hpp>
 
-#include "../OffsetPopup.hpp"
-#include "../OffsetController.hpp"
-#include "../Utils.hpp"
-#include "../OffsetStorage.hpp"
+#include "../ui/OffsetPopup.hpp"
+#include "../offset/OffsetController.hpp"
+#include "../utils/Utils.hpp"
+#include "../offset/OffsetStorage.hpp"
 
 using namespace geode::prelude;
 

@@ -3,7 +3,7 @@
 #include <Geode/Geode.hpp>
 #include <Geode/ui/TextInput.hpp>
 
-#include "OffsetStorage.hpp"
+#include "../offset/OffsetStorage.hpp"
 
 using namespace geode::prelude;
 

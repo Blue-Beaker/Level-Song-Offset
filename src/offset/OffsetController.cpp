@@ -1,8 +1,8 @@
 #include "OffsetController.hpp"
 #include "OffsetStorage.hpp"
-#include "negativeOffsetWorkaround.hpp"
-#include "AsyncPregenerator.hpp"
-#include "Utils.hpp"
+#include "negative-offset-workaround/negativeOffsetWorkaround.hpp"
+#include "negative-offset-workaround/AsyncPregenerator.hpp"
+#include "../utils/Utils.hpp"
 
 // Stores the effective totalOffset (ms) for the current PlayLayer.
 // Set in prepareMusic, read by getAudioFileName, queueStartMusic,

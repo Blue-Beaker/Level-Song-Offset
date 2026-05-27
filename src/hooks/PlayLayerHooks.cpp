@@ -1,11 +1,11 @@
 #include <Geode/modify/PlayLayer.hpp>
 
-#include "../OffsetController.hpp"
-#include "../OffsetStorage.hpp"
-#include "../negativeOffsetWorkaround.hpp"
-#include "../AsyncPregenerator.hpp"
-#include "../Utils.hpp"
-#include "../CacheStorage.hpp"
+#include "../offset/OffsetController.hpp"
+#include "../offset/OffsetStorage.hpp"
+#include "../offset/negative-offset-workaround/negativeOffsetWorkaround.hpp"
+#include "../offset/negative-offset-workaround/AsyncPregenerator.hpp"
+#include "../utils/Utils.hpp"
+#include "../offset/negative-offset-workaround/CacheStorage.hpp"
 
 using namespace geode::prelude;
 

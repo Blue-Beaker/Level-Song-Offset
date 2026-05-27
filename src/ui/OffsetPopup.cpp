@@ -1,7 +1,7 @@
 #include "OffsetPopup.hpp"
-#include "OffsetController.hpp"
-#include "CacheStorage.hpp"
-#include "Utils.hpp"
+#include "../offset/OffsetController.hpp"
+#include "../offset/negative-offset-workaround/CacheStorage.hpp"
+#include "../utils/Utils.hpp"
 
 bool OffsetPopup::setup(GJGameLevel* level, int currentOffset) {
     m_levelId = getLevelId(level);

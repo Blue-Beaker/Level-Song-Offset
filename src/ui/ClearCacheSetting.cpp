@@ -1,5 +1,5 @@
 #include "ClearCacheSetting.hpp"
-#include "CacheStorage.hpp"
+#include "../offset/negative-offset-workaround/CacheStorage.hpp"
 
 #include <Geode/binding/ButtonSprite.hpp>
 #include <Geode/binding/CCMenuItemSpriteExtra.hpp>

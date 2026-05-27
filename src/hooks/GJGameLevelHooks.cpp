@@ -1,7 +1,7 @@
 #include <Geode/modify/GJGameLevel.hpp>
 
-#include "../CacheStorage.hpp"
-#include "../AsyncPregenerator.hpp"
+#include "../offset/negative-offset-workaround/CacheStorage.hpp"
+#include "../offset/negative-offset-workaround/AsyncPregenerator.hpp"
 
 using namespace geode::prelude;
 
