@@ -1,18 +1,13 @@
 #include "AsyncPregenerator.hpp"
 #include "CacheStorage.hpp"
 #include "negativeOffsetWorkaround.hpp"
-#include "LevelUtils.hpp"
+#include "Utils.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <system_error>
 
 using namespace geode::prelude;
-
-// Conditional debug logging
-#define LOG_DEBUG(...) \
-    do { if (Mod::get()->getSettingValue<bool>("debug-logging")) \
-        log::info(__VA_ARGS__); } while(0)
 
 // ─── Singleton ──────────────────────────────────────────────────────────────
 

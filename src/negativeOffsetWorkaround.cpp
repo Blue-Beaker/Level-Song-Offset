@@ -1,8 +1,6 @@
 #include "negativeOffsetWorkaround.hpp"
 #include "OffsetStorage.hpp"
 
-#include <Geode/modify/GJGameLevel.hpp>
-
 #include <fmod.hpp>
 #include <cmath>
 
@@ -213,55 +211,4 @@ void ensurePaddedFile(int songKey, int totalOffset) {
         s_paddedPathBySongKey[songKey] = paddedPath;
         log::info("Eagerly created padded file for song key {}: {}", songKey, paddedPath.string());
     }
-}
-
-// ─── Hook: GJGameLevel::getAudioFileName ─────────────────────────────────────
-// Return the padded file path if one has been registered and exists.
-// prepareMusic waits for async generation to finish before proceeding,
-// so all padded files are guaranteed complete by the time this is called.
-// If a file is missing (edge case), queueStartMusic will fall back.
-
-class $modify(NegativeOffsetGJGameLevel, GJGameLevel) {
-    gd::string getAudioFileName() {
-        int songKey = getSongKey(this);
-
-        auto it = s_paddedPathBySongKey.find(songKey);
-        if (it != s_paddedPathBySongKey.end()) {
-            std::error_code ec;
-            if (std::filesystem::exists(it->second, ec)) {
-                log::debug("Using padded audio for song key {}", songKey);
-                return gd::string(it->second.string());
-            }
-        }
-
-        return GJGameLevel::getAudioFileName();
-    }
-};
-
-// ─── PlayLayer hooks ─────────────────────────────────────────────────────────
-
-void NegativeOffsetPlayLayer::onQuit() {
-    // Remove from registry (all entries for this level's songs)
-    if (m_level) {
-        int mainSongKey = getSongKey(m_level);
-        s_paddedPathBySongKey.erase(mainSongKey);
-        // Also clear any other song keys that might have been registered
-        // (multi-song levels store additional IDs in m_songIDs)
-        if (!m_level->m_songIDs.empty()) {
-            auto ids = m_level->m_songIDs;
-            size_t pos = 0;
-            while ((pos = ids.find(',')) != gd::string::npos) {
-                auto idStr = ids.substr(0, pos);
-                ids.erase(0, pos + 1);
-                auto key = geode::utils::numFromString<int>(idStr);
-                if (key) s_paddedPathBySongKey.erase(key.unwrap());
-            }
-            if (!ids.empty()) {
-                auto key = geode::utils::numFromString<int>(ids);
-                if (key) s_paddedPathBySongKey.erase(key.unwrap());
-            }
-        }
-    }
-
-    PlayLayer::onQuit();
 }

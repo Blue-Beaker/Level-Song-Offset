@@ -1,4 +1,5 @@
 #include "CacheStorage.hpp"
+#include "Utils.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -9,11 +10,6 @@
 #include <Geode/binding/FLAlertLayer.hpp>
 
 using namespace geode::prelude;
-
-// Conditional debug logging — enabled via the "debug-logging" setting
-#define LOG_DEBUG(...) \
-    do { if (Mod::get()->getSettingValue<bool>("debug-logging")) \
-        log::info(__VA_ARGS__); } while(0)
 
 // ─── Padded file registry ────────────────────────────────────────────────────
 //
