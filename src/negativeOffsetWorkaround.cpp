@@ -216,13 +216,15 @@ void ensurePaddedFile(int songKey, int totalOffset) {
 }
 
 // ─── Hook: GJGameLevel::getAudioFileName ─────────────────────────────────────
-// Return the padded WAV path if one has been registered for this level.
+// Return the padded file path if one has been registered and exists.
+// prepareMusic waits for async generation to finish before proceeding,
+// so all padded files are guaranteed complete by the time this is called.
+// If a file is missing (edge case), queueStartMusic will fall back.
 
 class $modify(NegativeOffsetGJGameLevel, GJGameLevel) {
     gd::string getAudioFileName() {
         int songKey = getSongKey(this);
 
-        // Check if we have a padded file registered for this song
         auto it = s_paddedPathBySongKey.find(songKey);
         if (it != s_paddedPathBySongKey.end()) {
             std::error_code ec;
@@ -232,49 +234,7 @@ class $modify(NegativeOffsetGJGameLevel, GJGameLevel) {
             }
         }
 
-        // Check if this level has a negative offset that needs the workaround
-        // s_currentTotalOffset is set by MyPlayLayer::prepareMusic before
-        // PlayLayer::prepareMusic calls getAudioFileName internally.
-        extern int s_currentTotalOffset;
-        int totalOffset = s_currentTotalOffset;
-        bool fixEnabled = Mod::get()->getSettingValue<bool>("negative-offset-fix");
-        if (totalOffset >= 0 || !fixEnabled) {
-            return GJGameLevel::getAudioFileName();
-        }
-
-        int absTotal = std::abs(totalOffset);
-
-        // Locate the original audio file
-        auto original = GJGameLevel::getAudioFileName();
-        if (original.empty()) return original;
-
-        auto* fileUtils = CCFileUtils::sharedFileUtils();
-        std::string fullPath = fileUtils->fullPathForFilename(original.c_str(), false);
-        if (fullPath.empty()) return original;
-
-        std::filesystem::path actualSourcePath(fullPath);
-        if (!std::filesystem::exists(actualSourcePath)) return original;
-
-        // Create the padded WAV file in the configured cache directory
-        auto paddedPath = getPaddedPath(songKey, totalOffset);
-        int intervalMs = ((absTotal + 999) / 1000) * 1000;
-        std::error_code ec;
-
-        if (!std::filesystem::exists(paddedPath, ec)) {
-            if (!createPaddedWavFile(actualSourcePath, paddedPath, intervalMs)) {
-                return original;
-            }
-        }
-
-        // Register and return
-        s_paddedPathBySongKey[songKey] = paddedPath;
-
-        log::info(
-            "Redirecting song key {} to padded file: {}",
-            songKey, paddedPath.string()
-        );
-
-        return gd::string(paddedPath.string());
+        return GJGameLevel::getAudioFileName();
     }
 };
 

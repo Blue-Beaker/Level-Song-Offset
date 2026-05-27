@@ -1,9 +1,11 @@
 #include "OffsetPopup.hpp"
+#include "OffsetController.hpp"
 #include "CacheStorage.hpp"
 #include "LevelUtils.hpp"
 
 bool OffsetPopup::setup(GJGameLevel* level, int currentOffset) {
     m_levelId = getLevelId(level);
+    m_level = level;
     this->setTitle("Level Song Offset");
 
     // Input label
@@ -57,6 +59,9 @@ void OffsetPopup::onApply(CCObject*) {
     }
     OffsetStorage::setOffsetForLevel(m_levelId, offset);
     log::debug("Set offset for level {} (resolved) to {}ms", m_levelId, offset);
+
+    // Start async pre-generation for the new offset value
+    startPregenerateForLevel(m_level);
 
     Notification::create(
         fmt::format("Offset set to {}ms for level {}", offset, m_levelId),

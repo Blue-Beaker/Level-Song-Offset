@@ -15,9 +15,19 @@ using namespace geode::prelude;
  * works for ALL music playback: initial music, song triggers, and seek.
  *
  * For negative offset with fix enabled, GJGameLevel::getAudioFileName
- * returns a padded WAV file (offset baked in), and queueStartMusic
- * redirects song triggers to the same padded file.
+ * returns a padded file (offset baked in), and queueStartMusic
+ * redirects song triggers to the same padded file. If the padded file
+ * isn't ready yet, it falls back to the original with offset=0.
+ *
+ * Padded files are pre-generated asynchronously in MyPlayLayer::init
+ * and can also be triggered manually (e.g. from OffsetPopup::onApply).
  */
+
+/// Start async pre-generation of padded audio files for a level's songs.
+/// If generation is already running, this call is silently ignored.
+/// Safe to call multiple times — already-cached files are skipped.
+void startPregenerateForLevel(GJGameLevel* level);
+
 class $modify(MyPlayLayer, PlayLayer) {
     bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects);
     void prepareMusic(bool dontWait);

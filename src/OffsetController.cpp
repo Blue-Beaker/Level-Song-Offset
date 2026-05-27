@@ -1,6 +1,7 @@
 #include "OffsetController.hpp"
 #include "OffsetStorage.hpp"
 #include "negativeOffsetWorkaround.hpp"
+#include "AsyncPregenerator.hpp"
 #include "LevelUtils.hpp"
 
 using namespace geode::prelude;
@@ -16,47 +17,87 @@ using namespace geode::prelude;
 // totalOffset = original GameManager::m_timeOffset + user offset.
 int s_currentTotalOffset = 0;
 
+// ─── Public: start pre-generation for a level ───────────────────────────────
+//
+// Called from MyPlayLayer::init and OffsetPopup::onApply. Starts async
+// generation for all songs in the level that need the negative offset
+// workaround. Already-cached files are skipped.
+//
+// If generation is already running (e.g. from MyPlayLayer::init while the
+// user opens the popup and applies a new offset), this call is silently
+// ignored to avoid duplicate work.
+//
+// Also pre-registers paths in s_paddedPathBySongKey so cache cleanup won't
+// delete files we're about to generate, and enforces the cache size limit.
+
+void startPregenerateForLevel(GJGameLevel* level) {
+    if (!level) return;
+    bool fixEnabled = Mod::get()->getSettingValue<bool>("negative-offset-fix");
+    if (!fixEnabled) return;
+
+    auto* audio = FMODAudioEngine::sharedEngine();
+    if (!audio) return;
+
+    int userOffset = OffsetStorage::getOffsetForLevel(getLevelId(level));
+    int originalOffset = audio->m_musicOffset;
+    int totalOffset = originalOffset + userOffset;
+
+    if (totalOffset >= 0) return;
+
+    // Don't start a new generation if one is already in progress
+    auto& pregen = AsyncPregenerator::get();
+    if (pregen.isRunning()) {
+        LOG_DEBUG("startPregenerateForLevel: generation already in progress, skipping");
+        return;
+    }
+
+    // Collect tasks (skips already-cached files inside collectPregenerateTasks)
+    auto tasks = collectPregenerateTasks(level, totalOffset);
+
+    if (!tasks.empty()) {
+        pregen.generate(std::move(tasks), nullptr);
+    }
+
+    // Pre-register paths so cache cleanup won't delete them
+    {
+        int songKey = (level->m_songID != 0) ? level->m_songID
+                                              : (-level->m_audioTrack - 1);
+        auto registerKey = [&](int key) {
+            if (!s_paddedPathBySongKey.count(key)) {
+                s_paddedPathBySongKey[key] = getPaddedPath(key, totalOffset);
+                LOG_DEBUG("Pre-registered song key {} to protect from cache cleanup", key);
+            }
+        };
+        registerKey(songKey);
+        if (!level->m_songIDs.empty()) {
+            auto ids = level->m_songIDs;
+            size_t pos = 0;
+            while ((pos = ids.find(',')) != gd::string::npos) {
+                auto idStr = ids.substr(0, pos);
+                ids.erase(0, pos + 1);
+                try { registerKey(geode::utils::numFromString<int>(idStr).unwrapOr(0)); } catch (...) {}
+            }
+            if (!ids.empty()) {
+                try { registerKey(geode::utils::numFromString<int>(ids).unwrapOr(0)); } catch (...) {}
+            }
+        }
+    }
+
+    enforceCacheSizeLimit();
+}
+
 // ─── Hook: PlayLayer ────────────────────────────────────────────────────────
-// We don't modify m_musicOffset anymore. Instead, queueStartMusic and
-// setMusicTimeMS hooks apply the offset to the start time parameter,
-// following the same pattern as jukebox.
 
 bool MyPlayLayer::init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
     if (!PlayLayer::init(level, useReplay, dontCreateObjects))
         return false;
 
-    // Pre-register all song keys for this level in s_paddedPathBySongKey,
-    // so cache cleanup won't delete files we're about to use.
-    if (m_level && Mod::get()->getSettingValue<bool>("negative-offset-fix")) {
-        int userOffset = OffsetStorage::getOffsetForLevel(getLevelId(m_level));
-        int originalOffset = FMODAudioEngine::sharedEngine()->m_musicOffset;
-        int totalOffset = originalOffset + userOffset;
-        if (totalOffset < 0) {
-            int songKey = (m_level->m_songID != 0) ? m_level->m_songID
-                                                   : (-m_level->m_audioTrack - 1);
-            auto collectKeys = [&](auto&& cb) {
-                cb(songKey);
-                if (!m_level->m_songIDs.empty()) {
-                    auto ids = m_level->m_songIDs;
-                    size_t pos = 0;
-                    while ((pos = ids.find(',')) != gd::string::npos) {
-                        auto idStr = ids.substr(0, pos);
-                        ids.erase(0, pos + 1);
-                        try { cb(geode::utils::numFromString<int>(idStr).unwrapOr(0)); } catch (...) {}
-                    }
-                    if (!ids.empty()) {
-                        try { cb(geode::utils::numFromString<int>(ids).unwrapOr(0)); } catch (...) {}
-                    }
-                }
-            };
-            collectKeys([&](int key) {
-                if (!s_paddedPathBySongKey.count(key)) {
-                    s_paddedPathBySongKey[key] = getPaddedPath(key, totalOffset);
-                    LOG_DEBUG("Pre-registered song key {} to protect from cache cleanup", key);
-                }
-            });
-            enforceCacheSizeLimit();
-        }
+    // Start async pre-generation of padded audio files in the background.
+    // If files are already cached, they're skipped. If generation doesn't
+    // finish before a song plays, queueStartMusic falls back to the
+    // original file with offset=0.
+    if (m_level) {
+        startPregenerateForLevel(m_level);
     }
 
     return true;
@@ -70,38 +111,27 @@ void MyPlayLayer::prepareMusic(bool dontWait) {
         int originalOffset = FMODAudioEngine::sharedEngine()->m_musicOffset;
         int totalOffset = originalOffset + userOffset;
 
-        bool fixEnabled = Mod::get()->getSettingValue<bool>("negative-offset-fix");
-
-        LOG_DEBUG("prepareMusic: level={}, userOffset={}, originalOffset={}, totalOffset={}, fixEnabled={}",
-                  getLevelId(m_level), userOffset, originalOffset, totalOffset, fixEnabled);
+        LOG_DEBUG("prepareMusic: level={}, userOffset={}, originalOffset={}, totalOffset={}",
+                  getLevelId(m_level), userOffset, originalOffset, totalOffset);
 
         // Save totalOffset for use by getAudioFileName, queueStartMusic,
         // and setMusicTimeMS hooks.
         s_currentTotalOffset = totalOffset;
 
-        if (totalOffset < 0 && fixEnabled) {
-            int songKey = (m_level->m_songID != 0) ? m_level->m_songID
-                                                   : (-m_level->m_audioTrack - 1);
-            ensurePaddedFile(songKey, totalOffset);
-
-            if (!m_level->m_songIDs.empty()) {
-                auto ids = m_level->m_songIDs;
-                size_t pos = 0;
-                while ((pos = ids.find(',')) != gd::string::npos) {
-                    auto idStr = ids.substr(0, pos);
-                    ids.erase(0, pos + 1);
-                    int extraSongId = geode::utils::numFromString<int>(idStr).unwrapOr(0);
-                    ensurePaddedFile(extraSongId, totalOffset);
-                }
-                if (!ids.empty()) {
-                    ensurePaddedFile(geode::utils::numFromString<int>(ids).unwrapOr(0), totalOffset);
-                }
+        // Wait for async pre-generation to finish so all padded files are
+        // ready before music starts playing. The worker threads run in the
+        // background while PlayLayer finishes setting up, so by the time
+        // prepareMusic is called they should be nearly done or already done.
+        if (totalOffset < 0 && Mod::get()->getSettingValue<bool>("negative-offset-fix")) {
+            auto& pregen = AsyncPregenerator::get();
+            if (pregen.isRunning()) {
+                LOG_DEBUG("prepareMusic: waiting for pre-generation...");
+                pregen.waitAll();
+                LOG_DEBUG("prepareMusic: pre-generation done");
             }
         }
     }
 
-    // Don't modify m_musicOffset — queueStartMusic/setMusicTimeMS hooks
-    // will apply the offset to the start time parameter instead.
     PlayLayer::prepareMusic(dontWait);
     LOG_DEBUG("AFTER prepareMusic: m_musicOffset={}",
               FMODAudioEngine::sharedEngine()->m_musicOffset);
@@ -119,12 +149,13 @@ void MyPlayLayer::prepareMusic(bool dontWait) {
 //    Add the per-level offset to the `start` parameter.
 //
 // 2. NEGATIVE OFFSET WITH FIX ENABLED:
-//    Redirect the audio path to a padded WAV file that has silence
+//    Redirect the audio path to a padded file that has silence
 //    prepended. The offset is baked into the file, so we do NOT modify
 //    the `start` parameter.
 //
-// Song key resolution uses musicID when available, falling back to
-// extractSongIdFromPath for cases where musicID is 0.
+//    If the padded file doesn't exist yet (async generation still in
+//    progress or failed), we fallback to the original file and set
+//    offset to 0 — no offset is better than broken audio.
 
 void MyFMODAudioEngine::queueStartMusic(gd::string audioFilename, float pitch,
                                          float unknown, float volume, bool loop,
@@ -144,7 +175,7 @@ void MyFMODAudioEngine::queueStartMusic(gd::string audioFilename, float pitch,
     int totalOffset = s_currentTotalOffset;
     bool fixEnabled = Mod::get()->getSettingValue<bool>("negative-offset-fix");
 
-    // ── Case 1: Negative offset with fix enabled → redirect to padded WAV ──
+    // ── Case 1: Negative offset with fix enabled → redirect to padded file ──
     if (totalOffset < 0 && fixEnabled) {
         // If path is already a padded file, pass through directly
         if (audioFilename.find("padded_") != gd::string::npos) {
@@ -155,7 +186,7 @@ void MyFMODAudioEngine::queueStartMusic(gd::string audioFilename, float pitch,
             return;
         }
 
-        // Resolve song key: prefer musicID parameter, fall back to path parsing
+        // Resolve song key
         int songKey = 0;
         if (musicID > 0) {
             songKey = musicID;
@@ -196,36 +227,14 @@ void MyFMODAudioEngine::queueStartMusic(gd::string audioFilename, float pitch,
         }
 
         auto paddedPath = getPaddedPath(songKey, totalOffset);
-
-        // Ensure the padded file exists
         std::error_code ec;
-        if (!std::filesystem::exists(paddedPath, ec)) {
-            auto it = s_paddedPathBySongKey.find(songKey);
-            if (it != s_paddedPathBySongKey.end() && std::filesystem::exists(it->second, ec)) {
-                paddedPath = it->second;
-            } else {
-                auto* fileUtils = CCFileUtils::sharedFileUtils();
-                std::string fullPath = fileUtils->fullPathForFilename(audioFilename.c_str(), false);
-                if (!fullPath.empty()) {
-                    std::filesystem::path actualSourcePath(fullPath);
-                    if (std::filesystem::exists(actualSourcePath)) {
-                        int intervalMs = ((std::abs(totalOffset) + 999) / 1000) * 1000;
-                        if (createPaddedWavFile(actualSourcePath, paddedPath, intervalMs)) {
-                            s_paddedPathBySongKey[songKey] = paddedPath;
-                        }
-                    }
-                }
-            }
-        }
 
         if (std::filesystem::exists(paddedPath, ec)) {
-            // Padded file has intervalMs of silence. We need to skip
-            // `remainder` ms so the effective offset equals totalOffset.
-            //   remainder = intervalMs - abs(totalOffset)
+            // Padded file is ready — use it with adjusted start
             int intervalMs = ((std::abs(totalOffset) + 999) / 1000) * 1000;
             int remainder = intervalMs - std::abs(totalOffset);
             int adjustedStart = start + remainder;
-            LOG_DEBUG("queueStartMusic: negative offset, redirect {} -> {}, start {} -> {} (remainder={})",
+            LOG_DEBUG("queueStartMusic: redirect {} -> {}, start {} -> {} (remainder={})",
                       audioFilename, paddedPath.string(), start, adjustedStart, remainder);
             FMODAudioEngine::queueStartMusic(
                 gd::string(paddedPath.string()), pitch, unknown, volume, loop,
@@ -233,6 +242,10 @@ void MyFMODAudioEngine::queueStartMusic(gd::string audioFilename, float pitch,
                 noPrepare, dontReset
             );
         } else {
+            // Padded file not ready — fallback to original with offset=0.
+            // This can happen if async generation hasn't finished yet or failed.
+            LOG_DEBUG("queueStartMusic: padded file not ready for song {}, "
+                      "falling back to original (offset=0)", songKey);
             FMODAudioEngine::queueStartMusic(
                 audioFilename, pitch, unknown, volume, loop, start, end,
                 fadeIn, fadeOut, musicID, p10, channelID, noPrepare, dontReset

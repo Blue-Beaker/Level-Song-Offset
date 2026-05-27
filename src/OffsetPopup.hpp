@@ -11,6 +11,7 @@ class OffsetPopup : public geode::Popup {
 protected:
     TextInput* m_offsetInput;
     int m_levelId;
+    GJGameLevel* m_level;
 
     bool setup(GJGameLevel* level, int currentOffset);
     void onApply(CCObject*);
