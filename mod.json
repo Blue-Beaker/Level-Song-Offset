@@ -11,6 +11,9 @@
 	"version": "v1.0.0",
 	"developer": "BlueBeaker",
 	"description": "",
+	"links": {
+		"source": "https://github.com/Blue-Beaker/Level-Song-Offset"
+	},
 	"settings": {
 		"negative-offset-title":{
 			"name": "Negative Offset Workaround",
