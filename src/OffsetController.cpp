@@ -104,8 +104,9 @@ bool MyPlayLayer::init(GJGameLevel* level, bool useReplay, bool dontCreateObject
 }
 
 void MyPlayLayer::prepareMusic(bool dontWait) {
-    LOG_DEBUG("BEFORE prepareMusic: m_musicOffset={}",
-              FMODAudioEngine::sharedEngine()->m_musicOffset);
+    if (auto* audio = FMODAudioEngine::sharedEngine()) {
+        LOG_DEBUG("BEFORE prepareMusic: m_musicOffset={}", audio->m_musicOffset);
+    }
     if (m_level) {
         int userOffset = OffsetStorage::getOffsetForLevel(getLevelId(m_level));
         int originalOffset = FMODAudioEngine::sharedEngine()->m_musicOffset;
@@ -133,8 +134,9 @@ void MyPlayLayer::prepareMusic(bool dontWait) {
     }
 
     PlayLayer::prepareMusic(dontWait);
-    LOG_DEBUG("AFTER prepareMusic: m_musicOffset={}",
-              FMODAudioEngine::sharedEngine()->m_musicOffset);
+    if (auto* audio = FMODAudioEngine::sharedEngine()) {
+        LOG_DEBUG("AFTER prepareMusic: m_musicOffset={}", audio->m_musicOffset);
+    }
 }
 
 // ─── Hook: FMODAudioEngine::queueStartMusic ─────────────────────────────────
@@ -242,10 +244,11 @@ void MyFMODAudioEngine::queueStartMusic(gd::string audioFilename, float pitch,
                 noPrepare, dontReset
             );
         } else {
-            // Padded file not ready — fallback to original with offset=0.
+            // Padded file not ready — fallback to original with unchanged start,
+            // but without the padded-file adjusted offset.
             // This can happen if async generation hasn't finished yet or failed.
             LOG_DEBUG("queueStartMusic: padded file not ready for song {}, "
-                      "falling back to original (offset=0)", songKey);
+                      "falling back to original", songKey);
             FMODAudioEngine::queueStartMusic(
                 audioFilename, pitch, unknown, volume, loop, start, end,
                 fadeIn, fadeOut, musicID, p10, channelID, noPrepare, dontReset

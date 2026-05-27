@@ -291,9 +291,9 @@ std::vector<PregenerateTask> collectPregenerateTasks(GJGameLevel* level, int tot
         if (originalPath.empty()) return;
 
         std::filesystem::path sourcePath(originalPath);
-        if (!std::filesystem::exists(sourcePath, ec)) return;
+        if (originalPath.empty() || !std::filesystem::exists(sourcePath, ec)) return;
 
-        tasks.push_back({songKey, totalOffset, sourcePath});
+        tasks.push_back({songKey, totalOffset, std::move(sourcePath)});
     });
 
     return tasks;

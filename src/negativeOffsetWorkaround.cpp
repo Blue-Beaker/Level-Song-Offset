@@ -86,7 +86,7 @@ bool createPaddedWavFile(
     int padMs
 ) {
     auto* audio = FMODAudioEngine::sharedEngine();
-    if (!audio->m_system) return false;
+    if (!audio || !audio->m_system) return false;
 
     // Load the original file as a sample (decodes to PCM in memory)
     FMOD::Sound* srcSound = nullptr;
@@ -253,10 +253,12 @@ void NegativeOffsetPlayLayer::onQuit() {
             while ((pos = ids.find(',')) != gd::string::npos) {
                 auto idStr = ids.substr(0, pos);
                 ids.erase(0, pos + 1);
-                try { s_paddedPathBySongKey.erase(geode::utils::numFromString<int>(idStr).unwrapOr(0)); } catch (...) {}
+                auto key = geode::utils::numFromString<int>(idStr);
+                if (key) s_paddedPathBySongKey.erase(key.unwrap());
             }
             if (!ids.empty()) {
-                try { s_paddedPathBySongKey.erase(geode::utils::numFromString<int>(ids).unwrapOr(0)); } catch (...) {}
+                auto key = geode::utils::numFromString<int>(ids);
+                if (key) s_paddedPathBySongKey.erase(key.unwrap());
             }
         }
     }
