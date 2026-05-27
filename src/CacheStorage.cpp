@@ -8,19 +8,11 @@
 #include <vector>
 
 #include <Geode/binding/FLAlertLayer.hpp>
+#include <Geode/binding/MusicDownloadManager.hpp>
 
 using namespace geode::prelude;
 
-// ─── Padded file registry ────────────────────────────────────────────────────
-//
-// Maps: source path hash → padded WAV path
-//   key = hashSourcePath(sourcePath) — unique per audio file
-//
-// Using a hash of the source path (instead of just song key) ensures that
-// jukebox nong songs with the same GD song ID but different file paths each
-// get their own padded cache file.
-
-std::unordered_map<size_t, std::filesystem::path> s_paddedPathByFileKey;
+// ─── Padded file helpers ─────────────────────────────────────────────────────
 
 /// Check if a path points to an original GD song file.
 /// Original songs are stored as "<songID>.mp3" or "<songID>.ogg" in the
@@ -118,10 +110,25 @@ std::filesystem::path getPaddedPath(int songKey, int totalOffset, const std::fil
     return getCacheDir() / fmt::format("padded_{}_{:x}_{}.wav", songKey, pathHash, intervalMs);
 }
 
-std::filesystem::path getPaddedPath(int songKey, int totalOffset) {
+/// Internal: songKey-only fallback path.
+static std::filesystem::path getPaddedPathFallback(int songKey, int totalOffset) {
     int absTotal = std::abs(totalOffset);
     int intervalMs = ((absTotal + 999) / 1000) * 1000;
     return getCacheDir() / fmt::format("padded_{}_{}.wav", songKey, intervalMs);
+}
+
+std::filesystem::path getPaddedPath(int songKey, int totalOffset) {
+    auto* mdm = MusicDownloadManager::sharedState();
+    if (mdm) {
+        auto originalPath = mdm->pathForSong(songKey);
+        if (!originalPath.empty()) {
+            std::filesystem::path srcPath(originalPath);
+            if (std::filesystem::exists(srcPath)) {
+                return getPaddedPath(songKey, totalOffset, srcPath);
+            }
+        }
+    }
+    return getPaddedPathFallback(songKey, totalOffset);
 }
 
 // ─── Cache collection helpers ──────────────────────────────────────────────────
@@ -230,19 +237,24 @@ void reduceCacheToSize(int maxSizeMB, std::unordered_set<std::filesystem::path> 
               static_cast<double>(freed) / (1024.0 * 1024.0));
 }
 
-void enforceCacheSizeLimit() {
+void enforceCacheSizeLimit(const std::vector<int>& songKeys, int totalOffset) {
     int maxSizeMB = Mod::get()->getSettingValue<int>("padded-cache-max-size");
-    // Build excluded set from the in-use registry
-    std::unordered_set<std::filesystem::path> excluded;
-    for (auto& [_, p] : s_paddedPathByFileKey) {
-        excluded.insert(p.lexically_normal());
-    }
     if (maxSizeMB < 0) {
         LOG_DEBUG("reduceCacheToSize: limit disabled (maxSizeMB={})", maxSizeMB);
         return;
-    }else{
-        reduceCacheToSize(maxSizeMB, std::move(excluded));
     }
+
+    // Build excluded set: only the padded files for the currently active songs.
+    // Compute the expected padded file path directly from the source path,
+    // without consulting any registry.
+    std::unordered_set<std::filesystem::path> excluded;
+
+    for (int songKey : songKeys) {
+        auto paddedPath = getPaddedPath(songKey, totalOffset);
+        excluded.insert(paddedPath.lexically_normal());
+    }
+
+    reduceCacheToSize(maxSizeMB, std::move(excluded));
 }
 
 void promptClearAllCache() {

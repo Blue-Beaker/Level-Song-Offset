@@ -5,9 +5,11 @@
 
 using namespace geode::prelude;
 
+extern int s_currentTotalOffset;
+
 // ─── Hook: GJGameLevel::getAudioFileName ─────────────────────────────────────
-// Look up the padded file by hashing the original audio file path.
-// This correctly handles jukebox nong songs (same song ID, different path).
+// Compute the padded file path on the fly from the original audio path.
+// If the padded file exists, return it; otherwise return the original.
 
 class $modify(NegativeOffsetGJGameLevel, GJGameLevel) {
     gd::string getAudioFileName() {
@@ -18,14 +20,14 @@ class $modify(NegativeOffsetGJGameLevel, GJGameLevel) {
         std::string fullPath = fileUtils->fullPathForFilename(original.c_str(), false);
         if (fullPath.empty()) return original;
 
-        auto fileKey = hashSourcePath(std::filesystem::path(fullPath));
-        auto it = s_paddedPathByFileKey.find(fileKey);
-        if (it != s_paddedPathByFileKey.end()) {
-            std::error_code ec;
-            if (std::filesystem::exists(it->second, ec)) {
-                log::debug("Using padded audio for file key {:x}", fileKey);
-                return gd::string(it->second.string());
-            }
+        auto srcPath = std::filesystem::path(fullPath);
+        int songKey = getSongKey(this);
+
+        auto paddedPath = getPaddedPath(songKey, s_currentTotalOffset, srcPath);
+        std::error_code ec;
+        if (std::filesystem::exists(paddedPath, ec)) {
+            log::debug("Using padded audio: {}", paddedPath.string());
+            return gd::string(paddedPath.string());
         }
 
         return original;

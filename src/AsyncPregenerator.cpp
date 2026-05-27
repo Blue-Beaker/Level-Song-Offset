@@ -179,8 +179,6 @@ void AsyncPregenerator::processTask(const PregenerateTask& task) {
             m_progress[idx].message = "Already cached";
             m_completedCount++;
         }
-        // Register in the global registry
-        s_paddedPathByFileKey[hashSourcePath(task.sourcePath)] = paddedPath;
         return;
     }
 
@@ -233,7 +231,6 @@ void AsyncPregenerator::processTask(const PregenerateTask& task) {
     }
 
     if (created) {
-        s_paddedPathByFileKey[hashSourcePath(task.sourcePath)] = paddedPath;
         LOG_DEBUG("AsyncPregenerator: created padded file for song key {}: {}",
                   task.songKey, paddedPath.string());
     } else {
@@ -255,47 +252,28 @@ std::vector<PregenerateTask> collectPregenerateTasks(GJGameLevel* level, int tot
     if (!mdm) return tasks;
 
     // Collect all song keys for this level
-    auto collectKeys = [&](auto&& cb) {
-        int mainKey = (level->m_songID != 0) ? level->m_songID
-                                             : (-level->m_audioTrack - 1);
-        cb(mainKey);
-        if (!level->m_songIDs.empty()) {
-            auto ids = level->m_songIDs;
-            size_t pos = 0;
-            while ((pos = ids.find(',')) != gd::string::npos) {
-                auto idStr = ids.substr(0, pos);
-                ids.erase(0, pos + 1);
-                try { cb(geode::utils::numFromString<int>(idStr).unwrapOr(0)); } catch (...) {}
-            }
-            if (!ids.empty()) {
-                try { cb(geode::utils::numFromString<int>(ids).unwrapOr(0)); } catch (...) {}
-            }
-        }
-    };
+    auto songKeys = getLevelSongKeys(level);
 
-    collectKeys([&](int songKey) {
-        if (songKey <= 0) return;
+    for (int songKey : songKeys) {
+        if (songKey <= 0) continue;
 
-        // Locate source file
         auto originalPath = mdm->pathForSong(songKey);
-        if (originalPath.empty()) return;
+        if (originalPath.empty()) continue;
 
         std::filesystem::path sourcePath(originalPath);
-        if (originalPath.empty() || !std::filesystem::exists(sourcePath)) return;
+        if (!std::filesystem::exists(sourcePath)) continue;
 
         LOG_DEBUG("collectPregenerateTasks: song key {}, source '{}'",
                   songKey, sourcePath.string());
 
-        // Check if padded file already exists (using path hash for nong support)
         auto paddedPath = getPaddedPath(songKey, totalOffset, sourcePath);
         std::error_code ec;
         if (std::filesystem::exists(paddedPath, ec)) {
-            s_paddedPathByFileKey[hashSourcePath(sourcePath)] = paddedPath;
-            return;
+            continue;
         }
 
         tasks.push_back({songKey, totalOffset, std::move(sourcePath)});
-    });
+    }
 
     return tasks;
 }

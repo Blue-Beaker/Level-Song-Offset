@@ -22,3 +22,13 @@ using namespace geode::prelude;
 ///
 /// @param level The level to resolve. Returns 0 if null.
 int getLevelId(GJGameLevel* level);
+
+// ─── Song key collection ────────────────────────────────────────────────────
+
+/// Collect all song keys for a level into a vector.
+/// Includes the main song key (m_songID or -m_audioTrack - 1) plus any
+/// additional song IDs from m_songIDs (comma-separated string).
+///
+/// @param level The level to collect song keys from.
+/// @return A vector of all song keys for the level.
+std::vector<int> getLevelSongKeys(GJGameLevel* level);

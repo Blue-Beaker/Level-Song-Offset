@@ -34,11 +34,11 @@ void startPregenerateForLevel(GJGameLevel* level) {
 
     auto tasks = collectPregenerateTasks(level, totalOffset);
 
+    auto songKeys = getLevelSongKeys(level);
+
     if (!tasks.empty()) {
         pregen.generate(std::move(tasks), nullptr);
     }
 
-    // collectPregenerateTasks already registers cached files in
-    // s_paddedPathByFileKey and enforceCacheSizeLimit is called inside it.
-    enforceCacheSizeLimit();
+    enforceCacheSizeLimit(songKeys, totalOffset);
 }

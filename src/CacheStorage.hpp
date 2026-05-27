@@ -4,7 +4,7 @@
 
 #include <filesystem>
 #include <functional>
-#include <unordered_map>
+#include <vector>
 
 using namespace geode::prelude;
 
@@ -22,8 +22,8 @@ using namespace geode::prelude;
  * Using a path hash ensures each unique audio file (including jukebox nongs
  * that share the same GD song ID) gets its own padded cache file.
  *
+ * All padded file paths are computed on the fly — no registry needed.
  * Responsibilities:
- *   - Registry: maps file key → padded WAV path (s_paddedPathByFileKey)
  *   - Path computation: getPaddedPath()
  *   - Cache directory resolution: getCacheDir()
  *   - Cache size enforcement: enforceCacheSizeLimit()
@@ -32,12 +32,9 @@ using namespace geode::prelude;
 
 /// Compute a hash for a source audio file path.
 /// Used to distinguish nong songs that share the same GD song ID.
+/// Returns 0 for original GD songs (numeric filename) so they use
+/// the old songKey-only naming scheme.
 size_t hashSourcePath(const std::filesystem::path& sourcePath);
-
-/// Registry mapping file key → padded WAV path.
-/// Key is hashSourcePath(sourcePath) — unique per audio file.
-/// Shared with OffsetController and negativeOffsetWorkaround hooks.
-extern std::unordered_map<size_t, std::filesystem::path> s_paddedPathByFileKey;
 
 /// Get the song key for a GJGameLevel's current song.
 int getSongKey(GJGameLevel* level);
@@ -59,10 +56,14 @@ std::filesystem::path getPaddedPath(int songKey, int totalOffset, const std::fil
 
 /// Overload for when the source path is unknown (uses songKey only).
 /// Falls back to the old naming scheme for backward compat.
+/// Resolves the active source path via MusicDownloadManager internally.
 std::filesystem::path getPaddedPath(int songKey, int totalOffset);
 
 /// Enforce the max cache size: delete oldest padded files when exceeded.
-/// Files currently registered in s_paddedPathByFileKey are excluded.
+/// Only the padded files for the given song keys (resolved via
+/// MusicDownloadManager to find the original/active paths) are excluded.
+/// @param songKeys   List of active song keys for the current level
+/// @param totalOffset The total offset used to compute padded filenames
 struct FileEntry {
     std::filesystem::path path;
     std::filesystem::file_time_type time;
@@ -90,6 +91,6 @@ uintmax_t deleteOldestFiles(std::vector<FileEntry>& files, uintmax_t target);
 /// notifications (no cache found / deletion result).
 void promptClearAllCache();
 
-void enforceCacheSizeLimit();
+void enforceCacheSizeLimit(const std::vector<int>& songKeys, int totalOffset);
 
 void reduceCacheToSize(int maxSizeMB, std::unordered_set<std::filesystem::path> excludedFiles);
