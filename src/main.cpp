@@ -1,6 +1,9 @@
 #include "OffsetPopup.hpp"
 #include "OffsetController.hpp"
 #include "LevelUtils.hpp"
+#include "ClearCacheSetting.hpp"
+
+using namespace geode::prelude;
 
 // ─── Shared helpers ──────────────────────────────────────────────────────────
 
@@ -22,6 +25,12 @@ static CCMenuItemSpriteExtra* createOffsetBtn(CCObject* target, SEL_MenuHandler 
         CircleBaseSize::Tiny
     );
     return CCMenuItemSpriteExtra::create(circleSprite, target, selector);
+}
+
+// ─── Register custom setting type ────────────────────────────────────────────
+
+$on_mod(Loaded) {
+    (void)Mod::get()->registerCustomSettingType("clear-cache-button", &ClearCacheSettingV3::parse);
 }
 
 // ─── LevelInfoLayer hook ────────────────────────────────────────────────────

@@ -12,8 +12,12 @@
 	"developer": "BlueBeaker",
 	"description": "",
 	"settings": {
-		"negative-offset-fix": {
+		"negative-offset-title":{
 			"name": "Negative Offset Workaround",
+			"type": "title"
+		},
+		"negative-offset-fix": {
+			"name": "Enable Negative Offset Workaround",
 			"description": "Automatically use workaround for the bug with negative offset",
 			"type": "bool",
 			"default": true
@@ -26,11 +30,19 @@
 		},
 		"padded-cache-max-size": {
 			"name": "Max Audio Cache Size (MB)",
-			"description": "Maximum disk space to use for the negative offset audio cache. Oldest files are deleted when exceeded. 0 = unlimited",
+			"description": "Maximum disk space to use for the negative offset audio cache. Oldest files are deleted when exceeded.\n-1 = unlimited, 0 = only current level",
 			"type": "int",
-			"default": 500,
-			"min": 0,
-			"max": 102400
+			"default": 100,
+			"min": -1
+		},
+		"clear-cache": {
+			"name": "Clear Audio Cache",
+			"description": "Delete all cached padded audio files used for the negative offset workaround. Files will be regenerated when needed.",
+			"type": "custom:clear-cache-button"
+		},
+		"debug":{
+			"name": "Debug",
+			"type": "title"
 		},
 		"debug-logging": {
 			"name": "Debug Logging",
@@ -40,7 +52,7 @@
 		},
 		"debug-beep-in-padding": {
 			"name": "Debug: Beep in Padding",
-			"description": "Add periodic beep tones in the silent padding to verify the padded audio is being used. Each beep = 100ms, every 500ms",
+			"description": "Add periodic beep tones to verify the negative offset audio is being used. Each beep = 100ms, every 500ms",
 			"type": "bool",
 			"default": false
 		}

@@ -6,6 +6,8 @@
 #include <unordered_set>
 #include <vector>
 
+#include <Geode/binding/FLAlertLayer.hpp>
+
 using namespace geode::prelude;
 
 // Conditional debug logging — enabled via the "debug-logging" setting
@@ -201,10 +203,42 @@ void enforceCacheSizeLimit() {
     for (auto& [_, p] : s_paddedPathBySongKey) {
         excluded.insert(p.lexically_normal());
     }
-    if (maxSizeMB <= 0) {
+    if (maxSizeMB < 0) {
         LOG_DEBUG("reduceCacheToSize: limit disabled (maxSizeMB={})", maxSizeMB);
         return;
     }else{
         reduceCacheToSize(maxSizeMB, std::move(excluded));
     }
+}
+
+void promptClearAllCache() {
+    auto collection = collectRemovableCacheFiles({});
+
+    if (collection.totalFiles <= 0) {
+        FLAlertLayer::create(
+            "Clear Audio Cache",
+            "No negative offset audio cache found.",
+            "OK"
+        )->show();
+        return;
+    }
+
+    createQuickPopup(
+        "Clear Audio Cache",
+        fmt::format("Delete all {} cached audio files ({:.2f} MB)?\nOriginal song files won't be deleted.",
+            collection.totalFiles,
+            static_cast<double>(collection.totalSize) / (1024.0 * 1024.0)),
+        "Cancel", "Delete",
+        [collection](auto*, bool btn2) mutable {
+            if (btn2) {
+                deleteOldestFiles(collection.removable, collection.totalSize);
+                Notification::create(
+                    fmt::format("Cleared {} audio cache ({:.2f} MB)",
+                        collection.totalFiles,
+                        static_cast<double>(collection.totalSize) / (1024.0 * 1024.0)),
+                    NotificationIcon::Success
+                )->show();
+            }
+        }
+    );
 }

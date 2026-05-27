@@ -70,6 +70,11 @@ CacheCollection collectRemovableCacheFiles(const std::unordered_set<std::filesys
 /// Returns the number of bytes actually freed.
 uintmax_t deleteOldestFiles(std::vector<FileEntry>& files, uintmax_t target);
 
+/// Convenience function: collect all removable cache, prompt the user with a
+/// confirmation popup, and delete everything if confirmed. Shows appropriate
+/// notifications (no cache found / deletion result).
+void promptClearAllCache();
+
 void enforceCacheSizeLimit();
 
 void reduceCacheToSize(int maxSizeMB, std::unordered_set<std::filesystem::path> excludedFiles);
