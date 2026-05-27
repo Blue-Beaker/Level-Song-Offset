@@ -57,15 +57,3 @@ class $modify(MyPlayLayer, PlayLayer) {
         }
     }
 };
-
-// ─── Hook: PlayLayer::onQuit (cleanup padded file registry) ─────────────────
-
-class $modify(NegativeOffsetPlayLayer, PlayLayer) {
-    void onQuit() {
-        // Registry is keyed by path hash, not song key.
-        // We can't easily know which hashes belong to this level without
-        // storing extra metadata, so we just let the cache cleanup handle it.
-        // The cache size limit will clean up orphaned files.
-        PlayLayer::onQuit();
-    }
-};
