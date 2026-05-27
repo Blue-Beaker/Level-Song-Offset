@@ -11,6 +11,18 @@ extern int s_currentTotalOffset;
 // ─── Hook: FMODAudioEngine::queueStartMusic ─────────────────────────────────
 
 class $modify(MyFMODAudioEngine, FMODAudioEngine) {
+    // Use Late priority so jukebox (and other mods) can process the call first
+    static void onModify(auto& self) {
+        (void)self.setHookPriorityPost(
+            "FMODAudioEngine::queueStartMusic",
+            Priority::Late
+        );
+        (void)self.setHookPriorityPost(
+            "FMODAudioEngine::setMusicTimeMS",
+            Priority::Late
+        );
+    }
+
     void queueStartMusic(gd::string audioFilename, float pitch,
                          float unknown, float volume, bool loop,
                          int start, int end, int fadeIn,
