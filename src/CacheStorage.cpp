@@ -13,13 +13,44 @@ using namespace geode::prelude;
 
 // ─── Padded file registry ────────────────────────────────────────────────────
 //
-// Maps: song key → padded WAV path
-//   song key = m_songID (custom song) or -m_audioTrack - 1 (built-in)
+// Maps: source path hash → padded WAV path
+//   key = hashSourcePath(sourcePath) — unique per audio file
 //
-// Using song key instead of level ID because a level can have multiple
-// songs (m_songIDs).  Each song needs its own padded file.
+// Using a hash of the source path (instead of just song key) ensures that
+// jukebox nong songs with the same GD song ID but different file paths each
+// get their own padded cache file.
 
-std::unordered_map<int, std::filesystem::path> s_paddedPathBySongKey;
+std::unordered_map<size_t, std::filesystem::path> s_paddedPathByFileKey;
+
+/// Check if a path points to an original GD song file.
+/// Original songs are stored as "<songID>.mp3" or "<songID>.ogg" in the
+/// GD songs directory. Nong songs (e.g. from jukebox) are stored elsewhere
+/// with arbitrary filenames.
+static bool isOriginalSongPath(const std::filesystem::path& sourcePath) {
+    auto filename = sourcePath.filename().string();
+    // Check for "digits.extension" pattern
+    auto dot = filename.rfind('.');
+    if (dot == std::string::npos) return false;
+    auto stem = filename.substr(0, dot);
+    auto ext = filename.substr(dot);
+    if (ext != ".mp3" && ext != ".ogg") return false;
+    // Check if stem is all digits
+    return !stem.empty() && stem.find_first_not_of("0123456789") == std::string::npos;
+}
+
+size_t hashSourcePath(const std::filesystem::path& sourcePath) {
+    // For original GD songs (numeric filename in songs folder), return 0
+    // so they use the old songKey-only naming scheme. This keeps cache
+    // files compatible and avoids unnecessary path hashing.
+    if (isOriginalSongPath(sourcePath)) {
+        return 0;
+    }
+    // For nong songs (jukebox etc.), hash the full path to distinguish
+    // different audio files that share the same GD song ID.
+    auto p = sourcePath.lexically_normal().string();
+    LOG_DEBUG("hashSourcePath: nong song path '{}' -> hash {:x}", p, std::hash<std::string>{}(p));
+    return std::hash<std::string>{}(p);
+}
 
 int getSongKey(GJGameLevel* level) {
     return (level->m_songID != 0) ? level->m_songID : (-level->m_audioTrack - 1);
@@ -47,8 +78,6 @@ int extractSongIdFromPath(std::string_view path) {
 std::filesystem::path getCacheDir() {
     auto customPath = Mod::get()->getSettingValue<std::string>("padded-cache-path");
     if (!customPath.empty()) {
-        // If the path starts with /, it might be a Linux path under Wine.
-        // Map it to Z:\ (Wine's default Z: drive mapping).
         if (customPath[0] == '/') {
             std::string winePath = "Z:";
             for (char c : customPath) {
@@ -65,19 +94,28 @@ std::filesystem::path getCacheDir() {
             }
         }
 
-        // Try the path as-is
         std::filesystem::path p(customPath);
         std::error_code ec;
         if (std::filesystem::exists(p, ec)) {
             return p;
         }
 
-        // Try to create the directory
         std::filesystem::create_directories(p, ec);
         if (!ec) return p;
         log::warn("Custom cache path invalid, falling back to save dir: {}", ec.message());
     }
     return Mod::get()->getSaveDir();
+}
+
+std::filesystem::path getPaddedPath(int songKey, int totalOffset, const std::filesystem::path& sourcePath) {
+    int absTotal = std::abs(totalOffset);
+    int intervalMs = ((absTotal + 999) / 1000) * 1000;
+    auto pathHash = hashSourcePath(sourcePath);
+    if (pathHash == 0) {
+        // Original GD song — use songKey-only naming for backward compat
+        return getCacheDir() / fmt::format("padded_{}_{}.wav", songKey, intervalMs);
+    }
+    return getCacheDir() / fmt::format("padded_{}_{:x}_{}.wav", songKey, pathHash, intervalMs);
 }
 
 std::filesystem::path getPaddedPath(int songKey, int totalOffset) {
@@ -196,7 +234,7 @@ void enforceCacheSizeLimit() {
     int maxSizeMB = Mod::get()->getSettingValue<int>("padded-cache-max-size");
     // Build excluded set from the in-use registry
     std::unordered_set<std::filesystem::path> excluded;
-    for (auto& [_, p] : s_paddedPathBySongKey) {
+    for (auto& [_, p] : s_paddedPathByFileKey) {
         excluded.insert(p.lexically_normal());
     }
     if (maxSizeMB < 0) {

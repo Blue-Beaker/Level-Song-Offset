@@ -62,25 +62,10 @@ class $modify(MyPlayLayer, PlayLayer) {
 
 class $modify(NegativeOffsetPlayLayer, PlayLayer) {
     void onQuit() {
-        if (m_level) {
-            int mainSongKey = getSongKey(m_level);
-            s_paddedPathBySongKey.erase(mainSongKey);
-            if (!m_level->m_songIDs.empty()) {
-                auto ids = m_level->m_songIDs;
-                size_t pos = 0;
-                while ((pos = ids.find(',')) != gd::string::npos) {
-                    auto idStr = ids.substr(0, pos);
-                    ids.erase(0, pos + 1);
-                    auto key = geode::utils::numFromString<int>(idStr);
-                    if (key) s_paddedPathBySongKey.erase(key.unwrap());
-                }
-                if (!ids.empty()) {
-                    auto key = geode::utils::numFromString<int>(ids);
-                    if (key) s_paddedPathBySongKey.erase(key.unwrap());
-                }
-            }
-        }
-
+        // Registry is keyed by path hash, not song key.
+        // We can't easily know which hashes belong to this level without
+        // storing extra metadata, so we just let the cache cleanup handle it.
+        // The cache size limit will clean up orphaned files.
         PlayLayer::onQuit();
     }
 };

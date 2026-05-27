@@ -89,8 +89,11 @@ class $modify(MyFMODAudioEngine, FMODAudioEngine) {
                 return;
             }
 
-            auto paddedPath = getPaddedPath(songKey, totalOffset);
+            auto paddedPath = getPaddedPath(songKey, totalOffset, std::filesystem::path(audioFilename));
             std::error_code ec;
+
+            LOG_DEBUG("queueStartMusic: song key {}, source '{}', padded '{}'",
+                      songKey, audioFilename, paddedPath.string());
 
             if (std::filesystem::exists(paddedPath, ec)) {
                 int intervalMs = ((std::abs(totalOffset) + 999) / 1000) * 1000;

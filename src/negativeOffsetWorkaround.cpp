@@ -176,39 +176,3 @@ bool createPaddedWavFile(
     );
     return true;
 }
-
-/// Ensure a padded WAV exists for the given song key and offset.
-/// Creates the padded file eagerly if it doesn't exist yet, using
-/// MusicDownloadManager to locate the original source file.
-/// This avoids runtime lag when Song Triggers fire during gameplay.
-void ensurePaddedFile(int songKey, int totalOffset) {
-    if (totalOffset >= 0) return;
-
-    bool fixEnabled = Mod::get()->getSettingValue<bool>("negative-offset-fix");
-    if (!fixEnabled) return;
-
-    auto paddedPath = getPaddedPath(songKey, totalOffset);
-
-    std::error_code ec;
-    if (std::filesystem::exists(paddedPath, ec)) {
-        s_paddedPathBySongKey[songKey] = paddedPath;
-        return;
-    }
-
-    // File doesn't exist — create it now using MusicDownloadManager to
-    // locate the original source file.
-    auto* mdm = MusicDownloadManager::sharedState();
-    if (!mdm) return;
-
-    auto originalPath = mdm->pathForSong(songKey);
-    if (originalPath.empty()) return;
-
-    std::filesystem::path actualSourcePath(originalPath);
-    if (!std::filesystem::exists(actualSourcePath)) return;
-
-    int intervalMs = ((std::abs(totalOffset) + 999) / 1000) * 1000;
-    if (createPaddedWavFile(actualSourcePath, paddedPath, intervalMs)) {
-        s_paddedPathBySongKey[songKey] = paddedPath;
-        log::info("Eagerly created padded file for song key {}: {}", songKey, paddedPath.string());
-    }
-}
