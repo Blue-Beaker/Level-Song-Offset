@@ -4,7 +4,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 
 # Set the target platform for Geode
-set(GEODE_TARGET_PLATFORM "Win64")
+# set(GEODE_TARGET_PLATFORM "Win64")
 
 project(LevelSongOffset VERSION 1.0.0)
 
