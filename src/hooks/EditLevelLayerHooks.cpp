@@ -1,19 +1,23 @@
 #include <Geode/modify/EditLevelLayer.hpp>
 
 #include "../ui/OffsetPopup.hpp"
+#include "../ui/OffsetButton.hpp"
 #include "../offset/OffsetController.hpp"
 #include "../utils/Utils.hpp"
-#include "../offset/OffsetStorage.hpp"
 
 using namespace geode::prelude;
 
 // ─── EditLevelLayer hook ────────────────────────────────────────────────────
 
 class $modify(OffsetEditLevelLayer, EditLevelLayer) {
+	struct Fields {
+		OffsetButton* offsetBtn;
+	};
     bool init(GJGameLevel* level) {
         if (!EditLevelLayer::init(level)) return false;
 
-        auto offsetBtn = createOffsetBtn(this, menu_selector(OffsetEditLevelLayer::onOffsetButton), getLevelId(level));
+        auto offsetBtn = OffsetButton::create(this, menu_selector(OffsetEditLevelLayer::onOffsetButton), getLevelId(level));
+        m_fields->offsetBtn=offsetBtn;
 
         auto menu = this->getChildByID("info-button-menu");
         if (menu) {
@@ -27,6 +31,6 @@ class $modify(OffsetEditLevelLayer, EditLevelLayer) {
     }
 
     void onOffsetButton(CCObject*) {
-        showOffsetPopup(this->m_level);
+        showOffsetPopup(this->m_level,this->m_fields->offsetBtn);
     }
 };

@@ -1,5 +1,4 @@
 #include "Utils.hpp"
-#include "../offset/OffsetStorage.hpp"
 #include "../ui/OffsetPopup.hpp"
 
 #include <cvolton.level-id-api/include/EditorIDs.hpp>
@@ -34,35 +33,4 @@ std::vector<int> getLevelSongKeys(GJGameLevel* level) {
     }
 
     return keys;
-}
-
-// ─── Shared helpers ──────────────────────────────────────────────────────────
-
-/// Show the offset popup for a level.
-void showOffsetPopup(GJGameLevel* level) {
-    if (!level) return;
-    int currentOffset = OffsetStorage::getOffsetForLevel(getLevelId(level));
-    auto popup = OffsetPopup::create(level, currentOffset);
-    popup->show();
-}
-
-/// Create an offset button with the standard icon.
-CCMenuItemSpriteExtra* createOffsetBtn(CCObject* target, SEL_MenuHandler selector, int levelId) {
-    auto circleSprite = CircleButtonSprite::createWithSprite(
-        "offset-icon.png"_spr,
-        1.0f,
-        CircleBaseColor::Green,
-        CircleBaseSize::Tiny
-    );
-    int offset = OffsetStorage::getOffsetForLevel(levelId);
-    if(offset!=0){
-        auto offsetLabel = CCLabelBMFont::create(geode::utils::numToString(offset).c_str(),"bigFont.fnt");
-        offsetLabel->setAnchorPoint(ccp(0.5,0));
-        offsetLabel->setScale(std::min(0.3f,35/offsetLabel->getContentWidth()));
-        offsetLabel->setPosition(circleSprite->getContentWidth()/2,0);
-        circleSprite->addChild(offsetLabel);
-    }
-    
-
-    return CCMenuItemSpriteExtra::create(circleSprite, target, selector);
 }

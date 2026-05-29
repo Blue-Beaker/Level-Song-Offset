@@ -3,7 +3,9 @@
 #include "../offset/negative-offset-workaround/CacheStorage.hpp"
 #include "../utils/Utils.hpp"
 
-bool OffsetPopup::setup(GJGameLevel* level, int currentOffset) {
+bool OffsetPopup::setup(GJGameLevel* level, OffsetButton* button, int currentOffset) {
+    this->button=button;
+
     m_levelId = getLevelId(level);
     m_level = level;
     this->setTitle("Level Song Offset");
@@ -68,6 +70,10 @@ void OffsetPopup::onApply(CCObject*) {
         NotificationIcon::Success
     )->show();
 
+    if(this->button!=nullptr){
+        this->button->setOffset(offset);
+    }
+
     this->onClose(nullptr);
 }
 
@@ -79,13 +85,23 @@ void OffsetPopup::onClearCache(CCObject*) {
     promptClearAllCache();
 }
 
-OffsetPopup* OffsetPopup::create(GJGameLevel* level, int currentOffset) {
+OffsetPopup* OffsetPopup::create(GJGameLevel* level, OffsetButton* button, int currentOffset) {
     auto ret = new OffsetPopup();
     if (ret->init(280.f, 180.f)) {
-        ret->setup(level, currentOffset);
+        ret->setup(level, button, currentOffset);
         ret->autorelease();
         return ret;
     }
     delete ret;
     return nullptr;
+}
+
+// ─── Shared helpers ──────────────────────────────────────────────────────────
+
+/// Show the offset popup for a level.
+void showOffsetPopup(GJGameLevel* level, OffsetButton* button) {
+    if (!level) return;
+    int currentOffset = OffsetStorage::getOffsetForLevel(getLevelId(level));
+    auto popup = OffsetPopup::create(level, button, currentOffset);
+    popup->show();
 }

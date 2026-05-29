@@ -1,20 +1,25 @@
 #include <Geode/modify/LevelInfoLayer.hpp>
 
 #include "../ui/OffsetPopup.hpp"
+#include "../ui/OffsetButton.hpp"
 #include "../offset/OffsetController.hpp"
 #include "../utils/Utils.hpp"
-#include "../offset/OffsetStorage.hpp"
 
 using namespace geode::prelude;
 
 // ─── LevelInfoLayer hook ────────────────────────────────────────────────────
 
 class $modify(OffsetLevelInfoLayer, LevelInfoLayer) {
+	struct Fields {
+		OffsetButton* offsetBtn;
+	};
     bool init(GJGameLevel* level, bool challenge) {
         if (!LevelInfoLayer::init(level, challenge))
             return false;
 
-        auto offsetBtn = createOffsetBtn(this, menu_selector(OffsetLevelInfoLayer::onOffsetButton), getLevelId(level));
+        auto offsetBtn = OffsetButton::create(this, menu_selector(OffsetLevelInfoLayer::onOffsetButton), getLevelId(level));
+        m_fields->offsetBtn=offsetBtn;
+        
         offsetBtn->setPosition(80, 0);
 
         auto menu = this->getChildByID("other-menu");
@@ -26,6 +31,6 @@ class $modify(OffsetLevelInfoLayer, LevelInfoLayer) {
     }
 
     void onOffsetButton(CCObject*) {
-        showOffsetPopup(this->m_level);
+        showOffsetPopup(this->m_level,this->m_fields->offsetBtn);
     }
 };
