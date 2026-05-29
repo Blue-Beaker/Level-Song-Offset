@@ -19,13 +19,15 @@ class $modify(OffsetLevelInfoLayer, LevelInfoLayer) {
 
         auto offsetBtn = OffsetButton::create(this, menu_selector(OffsetLevelInfoLayer::onOffsetButton), getLevelId(level));
         m_fields->offsetBtn=offsetBtn;
-        
+
         offsetBtn->setPosition(80, 0);
 
         auto menu = this->getChildByID("other-menu");
-        menu->addChild(offsetBtn);
-        offsetBtn->setID("offset-button"_spr);
-        menu->updateLayout();
+        if (menu) {
+            menu->addChild(offsetBtn);
+            offsetBtn->setID("offset-button"_spr);
+            menu->updateLayout();
+        }
 
         return true;
     }

@@ -4,6 +4,7 @@
 #include "../utils/Utils.hpp"
 
 bool OffsetPopup::setup(GJGameLevel* level, OffsetButton* button, int currentOffset) {
+    if (!level) return false;
     this->button=button;
 
     m_levelId = getLevelId(level);

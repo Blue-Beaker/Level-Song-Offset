@@ -41,7 +41,10 @@ void OffsetButton::setOffset(int offset) {
     }
 
     if (offset != 0) {
-        auto sprite = static_cast<CCSprite*>(getChildren()->objectAtIndex(0));
+        auto children = getChildren();
+        if (!children || children->count() == 0) return;
+        auto sprite = static_cast<CCSprite*>(children->objectAtIndex(0));
+        if (!sprite) return;
         m_offsetLabel = CCLabelBMFont::create(
             geode::utils::numToString(offset).c_str(), "bigFont.fnt"
         );

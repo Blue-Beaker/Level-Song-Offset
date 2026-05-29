@@ -11,7 +11,7 @@ using namespace geode::prelude;
 
 class $modify(OffsetEditLevelLayer, EditLevelLayer) {
 	struct Fields {
-		OffsetButton* offsetBtn;
+		OffsetButton* offsetBtn = nullptr;
 	};
     bool init(GJGameLevel* level) {
         if (!EditLevelLayer::init(level)) return false;
