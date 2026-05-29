@@ -7,27 +7,6 @@
 
 using namespace geode::prelude;
 
-// ─── Shared helpers ──────────────────────────────────────────────────────────
-
-/// Show the offset popup for a level.
-static void showOffsetPopup(GJGameLevel* level) {
-    if (!level) return;
-    int currentOffset = OffsetStorage::getOffsetForLevel(getLevelId(level));
-    auto popup = OffsetPopup::create(level, currentOffset);
-    popup->show();
-}
-
-/// Create an offset button with the standard icon.
-static CCMenuItemSpriteExtra* createOffsetBtn(CCObject* target, SEL_MenuHandler selector) {
-    auto circleSprite = CircleButtonSprite::createWithSprite(
-        "offset-icon.png"_spr,
-        1.0f,
-        CircleBaseColor::Green,
-        CircleBaseSize::Tiny
-    );
-    return CCMenuItemSpriteExtra::create(circleSprite, target, selector);
-}
-
 // ─── LevelInfoLayer hook ────────────────────────────────────────────────────
 
 class $modify(OffsetLevelInfoLayer, LevelInfoLayer) {
@@ -35,7 +14,7 @@ class $modify(OffsetLevelInfoLayer, LevelInfoLayer) {
         if (!LevelInfoLayer::init(level, challenge))
             return false;
 
-        auto offsetBtn = createOffsetBtn(this, menu_selector(OffsetLevelInfoLayer::onOffsetButton));
+        auto offsetBtn = createOffsetBtn(this, menu_selector(OffsetLevelInfoLayer::onOffsetButton), getLevelId(level));
         offsetBtn->setPosition(80, 0);
 
         auto menu = this->getChildByID("other-menu");

@@ -32,3 +32,8 @@ int getLevelId(GJGameLevel* level);
 /// @param level The level to collect song keys from.
 /// @return A vector of all song keys for the level.
 std::vector<int> getLevelSongKeys(GJGameLevel* level);
+
+// ─── Offset GUI ──────────────────────────────────────────────────────────
+
+void showOffsetPopup(GJGameLevel* level);
+CCMenuItemSpriteExtra* createOffsetBtn(CCObject* target, SEL_MenuHandler selector, int levelId);
