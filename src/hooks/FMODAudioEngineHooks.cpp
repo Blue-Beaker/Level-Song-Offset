@@ -69,7 +69,7 @@ class $modify(MyFMODAudioEngine, FMODAudioEngine) {
         // ── Negative offset with fix enabled → redirect to padded file ──
         if (totalOffset < 0 && fixEnabled) {
             // Already a padded file — pass through (keep padded state)
-            if (audioFilename.find("padded_") != gd::string::npos) {
+            if (std::string_view(audioFilename).find("padded_") != std::string_view::npos) {
                 FMODAudioEngine::queueStartMusic(
                     audioFilename, pitch, unknown, volume, loop, start, end,
                     fadeIn, fadeOut, musicID, p10, channelID, noPrepare, dontReset
@@ -171,7 +171,7 @@ class $modify(MyFMODAudioEngine, FMODAudioEngine) {
 
         // ── Negative offset with fix enabled → redirect to padded file ──
         if (totalOffset < 0 && fixEnabled) {
-            if (path.find("padded_") != gd::string::npos) {
+            if (std::string_view(path).find("padded_") != std::string_view::npos) {
                 FMODAudioEngine::loadAndPlayMusic(path, time, musicID);
                 return;
             }

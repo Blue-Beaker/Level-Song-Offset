@@ -189,7 +189,7 @@ CacheCollection collectRemovableCacheFiles(const std::unordered_set<std::filesys
 
 /// Delete files from \c collection (sorted oldest-first) until \p target bytes are freed.
 /// Returns the number of bytes actually freed.
-static uintmax_t deleteOldestFiles(std::vector<FileEntry>& files, uintmax_t target) {
+uintmax_t deleteOldestFiles(std::vector<FileEntry>& files, uintmax_t target) {
     // Sort oldest-first
     std::sort(files.begin(), files.end(),
         [](const FileEntry& a, const FileEntry& b) { return a.time < b.time; });

@@ -18,9 +18,9 @@ std::vector<int> getLevelSongKeys(GJGameLevel* level) {
     keys.push_back(mainKey);
 
     if (!level->m_songIDs.empty()) {
-        auto ids = level->m_songIDs;
+        std::string ids(level->m_songIDs);
         size_t pos = 0;
-        while ((pos = ids.find(',')) != gd::string::npos) {
+        while ((pos = ids.find(',')) != std::string::npos) {
             auto idStr = ids.substr(0, pos);
             ids.erase(0, pos + 1);
             auto key = geode::utils::numFromString<int>(idStr);
